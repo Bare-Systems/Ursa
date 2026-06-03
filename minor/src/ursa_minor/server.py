@@ -15,12 +15,15 @@ Tools:
   - lookup_service:   Identify what a port/service is
   - get_my_network_info: Get local network info
   - enumerate_subdomains: Find subdomains via CT + brute-force
-  - dirbust:          Directory brute-forcing
+  - probe_http:       Rich HTTP fingerprint (status, headers, TLS, title, methods)
+  - dirbust:          Directory brute-forcing with robots/sitemap/crawl discovery
+  - api_scan:         OpenAPI/Swagger spec discovery + endpoint + injection probing
+  - tls_scan:         TLS certificate and cipher analysis
   - crack_hash:       Dictionary attack on password hashes
   - identify_hash:    Identify hash type
   - generate_reverse_shell: Generate reverse shell payloads
   - credential_spray: Brute-force credentials
-  - vuln_scan:        Web vulnerability scanner
+  - vuln_scan:        Web vulnerability scanner (WSTG + ASVS-tagged findings)
   - os_fingerprint:   OS identification via TCP/IP analysis
   - smb_enum:         SMB share/version enumeration
   - snmp_scan:        SNMP device interrogation
@@ -28,6 +31,11 @@ Tools:
   - create_baseline:  Save a defensive baseline snapshot of host state
   - baseline_diff:    Compare current host state against a named baseline
   - triage_host:      Run a lightweight host triage workflow
+  - create_engagement: Define a pentest scope manifest (hosts, paths, approval gates)
+  - check_scope:      Validate a URL against the active engagement scope
+  - get_engagement:   Show the active engagement details
+  - close_engagement: Close the active engagement
+  - diff_scan_results: Regression diff — compare two saved scan results, report new/fixed findings
 
 Run with:
     sudo ursa-minor mcp serve
@@ -810,20 +818,49 @@ def dirbust(
     extensions: str | None = None,
     threads: int = 20,
     timeout: float = 5.0,
+    wordlist_file: str | None = None,
+    crawl: bool = True,
+    auth_header: str | None = None,
+    cookies: str | None = None,
 ) -> str:
     """
     Discover hidden files and directories on a web server by brute-forcing
     common paths. Finds admin panels, config files, backups, API docs, etc.
 
+    Discovery sources (all automatic unless overridden):
+    - Built-in wordlist (security-focused common paths)
+    - External wordlist file (one path per line, via wordlist_file)
+    - robots.txt / sitemap.xml path harvesting
+    - Shallow HTML crawl of the root page (href/src endpoints)
+
+    SPA/try_files false-positive detection: before scanning, a probe to a
+    guaranteed-nonexistent path fingerprints the fallback body. Any 200
+    response with a matching body hash is tagged [LIKELY_FP] and excluded
+    from CRITICAL FINDINGS.
+
+    If an active engagement is set, the request rate is automatically capped
+    to the engagement's rate_limit_rps setting.
+
     Args:
         url: Target URL (e.g., "http://target.com")
-        extensions: Comma-separated file extensions to try
-                    (e.g., "php,html,txt")
-        threads: Concurrent request threads (default 20, be respectful)
+        extensions: Comma-separated file extensions to try (e.g., "php,html,txt")
+        threads: Concurrent request threads (default 20)
         timeout: Request timeout in seconds (default 5.0)
+        wordlist_file: Path to an external wordlist file (one path per line).
+                       Paths from this file are merged with the built-in list.
+        crawl: If True (default), fetch robots.txt, sitemap.xml, and the root
+               page and add discovered paths to the scan list.
+        auth_header: Authorization header value for authenticated scanning
+                     (e.g., "Bearer eyJ..." or "Basic dXNlcjpwYXNz").
+        cookies: Cookie string for authenticated scanning
+                 (e.g., "session=abc123; csrf=xyz").
     """
+    import re as _re
     import urllib.request
     import urllib.error
+    import urllib.parse
+
+    _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ursa-minor/1"
 
     wordlist = [
         "admin", "login", "dashboard", "panel", "api", "api/v1", "api/v2",
@@ -846,40 +883,201 @@ def dirbust(
         "docs", "documentation", "readme",
     ]
 
-    paths = list(wordlist)
+    discovery_notes: list[str] = []
+
+    # ── External wordlist ────────────────────────────────────────────────────
+    if wordlist_file:
+        try:
+            from pathlib import Path as _Path
+            wl_path = _Path(wordlist_file).expanduser()
+            extra = [
+                line.strip().lstrip("/")
+                for line in wl_path.read_text(errors="ignore").splitlines()
+                if line.strip() and not line.startswith("#")
+            ]
+            wordlist = wordlist + extra
+            discovery_notes.append(
+                f"External wordlist: {wl_path.name} ({len(extra)} paths)"
+            )
+        except Exception as exc:
+            discovery_notes.append(f"[WARN] Could not read wordlist_file: {exc}")
+
+    # ── Engagement rate limiting ──────────────────────────────────────────────
+    # If an active engagement is set, cap threads to its rate_limit_rps.
+    # We use threads as a rough proxy: 1 thread ≈ 1 req/s at 1s timeout.
+    _eng_rps_note: str = ""
+    try:
+        from ursa_minor.engagement import get_active as _get_active_eng
+        _active_eng = _get_active_eng()
+        if _active_eng:
+            _eng_rps = _active_eng.get("rate_limit_rps", 0)
+            if _eng_rps > 0 and threads > _eng_rps:
+                threads = max(1, _eng_rps)
+                _eng_rps_note = (
+                    f"Threads capped to {threads} by engagement "
+                    f"rate_limit_rps={_eng_rps}"
+                )
+    except Exception:
+        pass
+
+    # ── robots.txt / sitemap.xml harvesting ──────────────────────────────────
+    def _fetch_text(path: str) -> str:
+        try:
+            req = urllib.request.Request(
+                f"{url.rstrip('/')}/{path}", method="GET"
+            )
+            req.add_header("User-Agent", _UA)
+            if auth_header:
+                req.add_header("Authorization", auth_header)
+            if cookies:
+                req.add_header("Cookie", cookies)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                if r.status == 200:
+                    return r.read(65536).decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        return ""
+
+    def _parse_robots(text: str) -> list[str]:
+        paths = []
+        for line in text.splitlines():
+            line = line.strip()
+            if line.lower().startswith(("disallow:", "allow:")):
+                _, _, val = line.partition(":")
+                val = val.strip().split("?")[0].split("#")[0].strip().lstrip("/")
+                if val and "*" not in val:
+                    paths.append(val)
+        return paths
+
+    def _parse_sitemap(text: str) -> list[str]:
+        paths = []
+        for m in _re.finditer(r"<loc>\s*(https?://[^<]+?)\s*</loc>", text, _re.IGNORECASE):
+            try:
+                parsed = urllib.parse.urlparse(m.group(1))
+                p = parsed.path.lstrip("/")
+                if p:
+                    paths.append(p)
+            except Exception:
+                pass
+        return paths
+
+    def _parse_html_links(html: str, base_url: str) -> list[str]:
+        """Extract href/src values from root page, return as relative paths."""
+        paths = []
+        base_parsed = urllib.parse.urlparse(base_url)
+        for m in _re.finditer(
+            r'(?:href|src|action)\s*=\s*["\']([^"\'#?]{1,200})["\']',
+            html, _re.IGNORECASE
+        ):
+            val = m.group(1).strip()
+            if not val or val.startswith(("data:", "javascript:", "mailto:", "tel:")):
+                continue
+            try:
+                joined = urllib.parse.urljoin(base_url, val)
+                parsed = urllib.parse.urlparse(joined)
+                # Only keep same-origin paths
+                if parsed.netloc == base_parsed.netloc or not parsed.netloc:
+                    p = parsed.path.lstrip("/")
+                    if p:
+                        paths.append(p)
+            except Exception:
+                pass
+        return paths
+
+    if crawl:
+        robots_text = _fetch_text("robots.txt")
+        if robots_text:
+            rp = _parse_robots(robots_text)
+            wordlist.extend(rp)
+            discovery_notes.append(f"robots.txt: {len(rp)} paths harvested")
+
+        sitemap_text = _fetch_text("sitemap.xml")
+        if sitemap_text:
+            sp = _parse_sitemap(sitemap_text)
+            wordlist.extend(sp)
+            discovery_notes.append(f"sitemap.xml: {len(sp)} paths harvested")
+
+        root_html = _fetch_text("")
+        if root_html:
+            lp = _parse_html_links(root_html, url)
+            wordlist.extend(lp)
+            discovery_notes.append(f"Root page crawl: {len(lp)} link paths harvested")
+
+    # ── Extension expansion ───────────────────────────────────────────────────
+    base_wordlist = list(wordlist)
+    paths = list(base_wordlist)
     if extensions:
-        for word in wordlist:
+        for word in base_wordlist:
             for ext in extensions.split(","):
                 paths.append(f"{word}.{ext.strip()}")
-    paths = list(set(paths))
+    paths = list(dict.fromkeys(paths))  # deduplicate preserving order
+
+    import hashlib as _hashlib
 
     show_codes = {200, 201, 204, 301, 302, 307, 308, 401, 403, 405, 500}
     results = []
+
+    # ── SPA / try_files baseline fingerprinting ───────────────────────────────
+    _spa_baseline_hash: str | None = None
+    _spa_baseline_size: int | None = None
+    try:
+        _probe_url = f"{url.rstrip('/')}/____nonexistent_ursa_probe____"
+        _probe_req = urllib.request.Request(_probe_url, method="GET")
+        _probe_req.add_header("User-Agent", _UA)
+        if auth_header:
+            _probe_req.add_header("Authorization", auth_header)
+        if cookies:
+            _probe_req.add_header("Cookie", cookies)
+        _probe_resp = urllib.request.urlopen(_probe_req, timeout=timeout)
+        if _probe_resp.status == 200:
+            _probe_body = _probe_resp.read(4096)
+            _spa_baseline_hash = _hashlib.sha256(_probe_body).hexdigest()
+            _spa_baseline_size = len(_probe_body)
+    except Exception:
+        pass
 
     def check_path(path):
         target = f"{url.rstrip('/')}/{path}"
         try:
             req = urllib.request.Request(target, method="GET")
-            req.add_header("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            req.add_header("User-Agent", _UA)
+            if auth_header:
+                req.add_header("Authorization", auth_header)
+            if cookies:
+                req.add_header("Cookie", cookies)
             response = urllib.request.urlopen(req, timeout=timeout)
-            size = len(response.read(10000))
-            return path, response.status, size
+            body = response.read(10000)
+            size = len(body)
+            body_hash = _hashlib.sha256(body[:4096]).hexdigest()
+            return path, response.status, size, body_hash
         except urllib.error.HTTPError as e:
-            return path, e.code, 0
+            return path, e.code, 0, ""
         except Exception:
-            return path, 0, 0
+            return path, 0, 0, ""
 
     from concurrent.futures import ThreadPoolExecutor, as_completed as asc
 
     with ThreadPoolExecutor(max_workers=threads) as executor:
         futures = {executor.submit(check_path, p): p for p in paths}
         for f in asc(futures):
-            path, status, size = f.result()
+            path, status, size, body_hash = f.result()
             if status in show_codes:
-                results.append({"path": path, "status": status, "size": size})
+                is_fp = (
+                    status == 200
+                    and _spa_baseline_hash is not None
+                    and body_hash == _spa_baseline_hash
+                )
+                results.append({
+                    "path": path,
+                    "status": status,
+                    "size": size,
+                    "false_positive": is_fp,
+                })
 
     results.sort(key=lambda x: (x["status"], x["path"]))
+
+    real_results = [r for r in results if not r.get("false_positive")]
+    fp_results = [r for r in results if r.get("false_positive")]
 
     lines = [
         f"Directory Brute-Force: {url}",
@@ -887,10 +1085,32 @@ def dirbust(
         "",
     ]
 
+    if auth_header or cookies:
+        lines.append(f"Auth: {'Authorization header set' if auth_header else ''}{'  Cookies set' if cookies else ''}".strip())
+        lines.append("")
+
+    if _eng_rps_note:
+        lines.append(f"[Rate] {_eng_rps_note}")
+        lines.append("")
+
+    if discovery_notes:
+        lines.append("Discovery sources:")
+        for note in discovery_notes:
+            lines.append(f"  + {note}")
+        lines.append("")
+
+    if _spa_baseline_hash is not None:
+        lines.append(
+            f"[NOTE] SPA/try_files fallback detected — paths returning the same "
+            f"body as unknown routes are tagged [LIKELY_FP] and excluded from "
+            f"CRITICAL FINDINGS. Verify manually before treating as exploitable."
+        )
+        lines.append("")
+
     if not results:
         lines.append("No interesting paths found.")
     else:
-        by_status = {}
+        by_status: dict = {}
         for r in results:
             by_status.setdefault(r["status"], []).append(r)
 
@@ -903,10 +1123,11 @@ def dirbust(
             label = status_labels.get(status, f"Status {status}")
             lines.append(f"[{status}] {label}:")
             for r in sorted(by_status[status], key=lambda x: x["path"]):
-                lines.append(f"  /{r['path']}  ({r['size']}B)")
+                fp_tag = "  [LIKELY_FP]" if r.get("false_positive") else ""
+                lines.append(f"  /{r['path']}  ({r['size']}B){fp_tag}")
             lines.append("")
 
-        critical = [r for r in results if any(
+        critical = [r for r in real_results if any(
             k in r["path"].lower()
             for k in [".env", ".git", "backup", "config", "admin",
                       "phpinfo", "wp-config", "database", "dump"]
@@ -916,7 +1137,12 @@ def dirbust(
             for r in critical:
                 lines.append(f"  [{r['status']}] /{r['path']}")
 
-    lines.append(f"\n{len(results)} paths found")
+    if fp_results:
+        lines.append(
+            f"\n{len(fp_results)} path(s) flagged [LIKELY_FP] — "
+            f"matched SPA fallback body; manual verification required."
+        )
+    lines.append(f"\n{len(results)} paths found ({len(real_results)} confirmed, {len(fp_results)} likely false positive)")
 
     result = "\n".join(lines)
     return _auto_save("dirbust", result,
@@ -1287,6 +1513,8 @@ def vuln_scan(
     url: str,
     tests: str = "all",
     timeout: float = 10.0,
+    auth_header: str | None = None,
+    cookies: str | None = None,
 ) -> str:
     """
     Scan a web URL for common vulnerabilities: SQL injection, XSS,
@@ -1295,11 +1523,20 @@ def vuln_scan(
     Provide a URL with parameters to test (e.g., http://target.com/page?id=1).
     Without parameters, only header checks are performed.
 
+    Supports authenticated scanning via auth_header or cookies so protected
+    routes can be tested after login.
+
     Args:
         url: Target URL, ideally with parameters to test
         tests: Comma-separated tests to run: sqli,xss,cmdi,lfi,headers,all
                (default: all)
         timeout: Request timeout in seconds
+        auth_header: Authorization header value to send with every request
+                     (e.g., "Bearer eyJ..." or "Basic dXNlcjpwYXNz").
+                     Include the scheme prefix.
+        cookies: Cookie string to send with every request
+                 (e.g., "session=abc123; csrf=xyz"). Follows the HTTP
+                 Cookie header format.
     """
     import urllib.request
     import urllib.error
@@ -1313,15 +1550,48 @@ def vuln_scan(
     all_findings = []
 
     def _fetch(u):
-        try:
+        import ssl as _ssl_mod
+
+        def _do_fetch(ssl_ctx=None):
             req = urllib.request.Request(u)
             req.add_header("User-Agent", "Mozilla/5.0")
-            resp = urllib.request.urlopen(req, timeout=timeout)
+            if auth_header:
+                req.add_header("Authorization", auth_header)
+            if cookies:
+                req.add_header("Cookie", cookies)
+            if ssl_ctx is not None:
+                https_handler = urllib.request.HTTPSHandler(context=ssl_ctx)
+                opener = urllib.request.build_opener(https_handler)
+                resp = opener.open(req, timeout=timeout)
+            else:
+                resp = urllib.request.urlopen(req, timeout=timeout)
             return resp.status, dict(resp.headers), resp.read().decode("utf-8", errors="ignore")
+
+        def _is_ssl_verify_error(exc: Exception) -> bool:
+            """urllib wraps SSL errors in URLError; unwrap to check."""
+            if isinstance(exc, urllib.error.URLError):
+                return isinstance(exc.reason, _ssl_mod.SSLCertVerificationError)
+            return isinstance(exc, _ssl_mod.SSLCertVerificationError)
+
+        try:
+            return _do_fetch()
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="ignore") if e.fp else ""
             return e.code, dict(e.headers), body
-        except Exception:
+        except Exception as exc:
+            if _is_ssl_verify_error(exc):
+                # Retry with CERT_NONE for self-signed / private-CA targets so
+                # security header audits remain accurate.
+                try:
+                    ctx = _ssl_mod.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = _ssl_mod.CERT_NONE
+                    return _do_fetch(ssl_ctx=ctx)
+                except urllib.error.HTTPError as e:
+                    body = e.read().decode("utf-8", errors="ignore") if e.fp else ""
+                    return e.code, dict(e.headers), body
+                except Exception:
+                    return 0, {}, ""
             return 0, {}, ""
 
     def _inject(u, param, payload):
@@ -1335,22 +1605,36 @@ def vuln_scan(
 
     if "headers" in test_list:
         _, headers, _ = _fetch(url)
+        scheme = urllib.parse.urlparse(url).scheme.lower()
+        is_https = scheme == "https"
+
+        # HSTS is only meaningful on HTTPS; flagging it on plain HTTP
+        # overstates risk for intentional HTTP-only fixtures and local targets.
+        hsts_sev = "HIGH" if is_https else "INFORMATIONAL"
+        hsts_note = "" if is_https else " (not applicable on plain HTTP; expected on HTTPS terminator)"
+
+        # CSP is context-dependent — low risk for API-only or local targets.
+        csp_sev = "HIGH" if is_https else "LOW"
+
+        # sec_headers: header → (severity, note, wstg_ref, asvs_ref)
+        # WSTG refs: https://owasp.org/www-project-web-security-testing-guide/
+        # ASVS refs: https://owasp.org/www-project-application-security-verification-standard/
         sec_headers = {
-            "Strict-Transport-Security": "HIGH",
-            "Content-Security-Policy": "HIGH",
-            "X-Frame-Options": "MEDIUM",
-            "X-Content-Type-Options": "LOW",
+            "Strict-Transport-Security": (hsts_sev, hsts_note, "WSTG-CONF-10", "ASVS-9.2.1"),
+            "Content-Security-Policy":   (csp_sev,  "",        "WSTG-CONF-12", "ASVS-14.4.4"),
+            "X-Frame-Options":           ("MEDIUM",  "",        "WSTG-CLNT-09", "ASVS-14.4.3"),
+            "X-Content-Type-Options":    ("LOW",     "",        "WSTG-CONF-07", "ASVS-14.4.1"),
         }
-        for h, sev in sec_headers.items():
+        for h, (sev, note, wstg, asvs) in sec_headers.items():
             if h.lower() not in {k.lower() for k in headers}:
-                all_findings.append(f"[{sev}] Missing {h}")
+                all_findings.append(f"[{sev}] Missing {h}{note} [{wstg}][{asvs}]")
 
         server = headers.get("Server", "")
         if server:
-            all_findings.append(f"[LOW] Server header discloses: {server}")
+            all_findings.append(f"[LOW] Server header discloses: {server} [WSTG-INFO-02][ASVS-14.3.3]")
         xpb = headers.get("X-Powered-By", "")
         if xpb:
-            all_findings.append(f"[LOW] X-Powered-By discloses: {xpb}")
+            all_findings.append(f"[LOW] X-Powered-By discloses: {xpb} [WSTG-INFO-08][ASVS-14.3.3]")
 
     parsed = urllib.parse.urlparse(url)
     params = list(urllib.parse.parse_qs(parsed.query, keep_blank_values=True).keys())
@@ -1362,7 +1646,10 @@ def vuln_scan(
         else:
             lines.append("No URL parameters found to test injection points.")
             lines.append("Provide a URL like: http://target.com/page?id=1")
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        return _auto_save("vuln_scan", result,
+                          {"url": url, "tests": tests, "findings": len(all_findings)},
+                          structured_data=all_findings)
 
     sqli_errors = [
         r"sql syntax", r"mysql", r"sqlite", r"postgresql",
@@ -1387,7 +1674,8 @@ def vuln_scan(
                     if re.search(pat, body, re.IGNORECASE):
                         all_findings.append(
                             f"[CRITICAL] SQL Injection in '{param}' "
-                            f"— payload: {payload} — evidence: {re.search(pat, body, re.IGNORECASE).group()}")
+                            f"— payload: {payload} — evidence: {re.search(pat, body, re.IGNORECASE).group()} "
+                            f"[WSTG-INPV-05][ASVS-5.3.4]")
                         break
 
         if "xss" in test_list:
@@ -1396,11 +1684,11 @@ def vuln_scan(
                 _, _, body = _fetch(test_url)
                 if payload in body:
                     all_findings.append(
-                        f"[HIGH] Reflected XSS in '{param}' — payload reflected unescaped")
+                        f"[HIGH] Reflected XSS in '{param}' — payload reflected unescaped [WSTG-CLNT-01][ASVS-5.3.3]")
                     break
                 if payload == "{{7*7}}" and "49" in body:
                     all_findings.append(
-                        f"[CRITICAL] Template Injection in '{param}' — {{{{7*7}}}} = 49")
+                        f"[CRITICAL] Template Injection in '{param}' — {{{{7*7}}}} = 49 [WSTG-INPV-18][ASVS-5.2.5]")
                     break
 
         if "cmdi" in test_list:
@@ -1410,7 +1698,7 @@ def vuln_scan(
                 for pat in cmdi_indicators:
                     if re.search(pat, body, re.IGNORECASE):
                         all_findings.append(
-                            f"[CRITICAL] Command Injection in '{param}' — payload: {payload}")
+                            f"[CRITICAL] Command Injection in '{param}' — payload: {payload} [WSTG-INPV-12][ASVS-5.2.2]")
                         break
 
         if "lfi" in test_list:
@@ -1419,7 +1707,7 @@ def vuln_scan(
                 _, _, body = _fetch(test_url)
                 if re.search(r"root:.*:0:0:", body):
                     all_findings.append(
-                        f"[CRITICAL] LFI in '{param}' — /etc/passwd readable")
+                        f"[CRITICAL] LFI in '{param}' — /etc/passwd readable [WSTG-INPV-07][ASVS-12.3.1]")
                     break
 
     lines = [
@@ -1866,6 +2154,7 @@ from ursa_minor.defense import (
 )
 from ursa_minor.results import list_results, get_result, export_json, export_csv, export_html
 from ursa_minor.results import export_engagement_report as _engagement_report
+from ursa_minor.results import diff_results as _diff_results
 
 
 @mcp_server.tool()
@@ -2105,6 +2394,86 @@ def export_engagement_report(
     return _engagement_report(result_ids=ids, tool_filter=tool_filter, title=title, format=format)
 
 
+@mcp_server.tool()
+def diff_scan_results(
+    baseline_id: str,
+    current_id: str,
+) -> str:
+    """
+    Diff two saved scan results to surface regressions or fixed issues.
+
+    Compares the structured findings of two scans saved under the given
+    result IDs and reports:
+
+    - NEW findings — present in current but absent from baseline (regressions
+      or newly discovered issues after a change)
+    - FIXED findings — present in baseline but absent from current (issues
+      that disappeared — either genuinely fixed or environment-changed)
+    - UNCHANGED count — findings common to both runs
+
+    Both results must come from the same tool (e.g. two ``vuln_scan`` runs
+    against the same target before and after a patch). Cross-tool diffs are
+    accepted but may produce noisy output.
+
+    Typical workflow::
+
+        vuln_scan(url=...) → saves baseline_id
+        # apply fix to target
+        vuln_scan(url=...) → saves current_id
+        diff_scan_results(baseline_id=..., current_id=...)
+
+    Args:
+        baseline_id: Result ID of the earlier (reference) scan.
+        current_id:  Result ID of the newer scan to compare against.
+    """
+    diff = _diff_results(baseline_id, current_id)
+
+    if diff.get("error"):
+        return f"diff_scan_results error: {diff['error']}"
+
+    lines = [
+        f"Scan Diff: {baseline_id} → {current_id}",
+        f"  Baseline : {diff['baseline_tool']} @ {diff['baseline_timestamp']}",
+        f"  Current  : {diff['current_tool']} @ {diff['current_timestamp']}",
+        "",
+    ]
+
+    new_f = diff["new_findings"]
+    fixed_f = diff["fixed_findings"]
+    unchanged = diff["unchanged_count"]
+
+    if new_f:
+        lines.append(f"NEW ({len(new_f)}) — present in current, absent from baseline:")
+        for item in new_f:
+            lines.append(f"  + {item}")
+        lines.append("")
+
+    if fixed_f:
+        lines.append(f"FIXED ({len(fixed_f)}) — present in baseline, absent from current:")
+        for item in fixed_f:
+            lines.append(f"  - {item}")
+        lines.append("")
+
+    lines.append(f"UNCHANGED: {unchanged} finding(s) in common")
+
+    if not new_f and not fixed_f:
+        lines.append("\nNo differences detected — scans are identical.")
+
+    result = "\n".join(lines)
+    return _auto_save(
+        "diff_scan_results",
+        result,
+        {
+            "baseline_id": baseline_id,
+            "current_id": current_id,
+            "new_count": len(new_f),
+            "fixed_count": len(fixed_f),
+            "unchanged_count": unchanged,
+        },
+        structured_data=diff,
+    )
+
+
 # ── ARP Spoof (MCP-exposed with safeguards) ──
 
 
@@ -2320,6 +2689,679 @@ def arp_spoof_stop() -> str:
         "  ARP tables restored",
         "  IP forwarding disabled",
     ])
+
+
+# ── HTTP Probe ──
+
+
+@mcp_server.tool()
+def probe_http(
+    url: str,
+    timeout: float = 10.0,
+    check_favicon: bool = True,
+    check_methods: bool = True,
+) -> str:
+    """
+    Perform a rich HTTP probe against a single URL and return a structured
+    fingerprint. Useful as a first step before dirbust or vuln_scan.
+
+    Collects in one round-trip:
+    - Final status code and full redirect chain
+    - Response time
+    - Server and X-Powered-By headers
+    - Content-Type, body size, sha256 body hash
+    - Page title (extracted from HTML)
+    - Security header audit (HSTS, CSP, X-Frame-Options, etc.)
+    - TLS certificate: subject, issuer, expiry, protocol, cipher (HTTPS only)
+    - Favicon sha256 hash (optional, makes Shodan-style fingerprinting easier)
+    - Allowed HTTP methods via OPTIONS probe (optional)
+
+    Args:
+        url: Target URL (e.g., "https://target.com/api")
+        timeout: Request timeout in seconds (default 10.0)
+        check_favicon: Fetch /favicon.ico and hash it (default True)
+        check_methods: Send OPTIONS to discover allowed methods (default True)
+    """
+    from ursa_minor.probe import probe as _probe, format_report as _fmt
+
+    data = _probe(url, timeout=timeout,
+                  check_favicon=check_favicon, check_methods=check_methods)
+    report = _fmt(data)
+
+    # Flatten security_headers for structured_data (keeps raw_headers out)
+    structured = {k: v for k, v in data.items() if k != "raw_headers"}
+    return _auto_save("probe_http", report,
+                      {"url": url, "status": data.get("status")},
+                      structured_data=structured)
+
+
+# ── TLS Scan ──
+
+
+@mcp_server.tool()
+def tls_scan(
+    host: str,
+    port: int = 443,
+    timeout: float = 10.0,
+) -> str:
+    """
+    Analyze the TLS configuration of a host: certificate chain, protocol
+    version, cipher suite, expiry, and SAN list. Uses Python ssl stdlib only
+    (no external tools required).
+
+    Flags:
+    - Self-signed certificates
+    - Certificates expiring within 30 days
+    - Expired certificates
+    - Weak protocols (TLSv1.0, TLSv1.1, SSLv3)
+    - Hostname mismatch (CN vs target host)
+
+    Args:
+        host: Hostname or IP to test (e.g., "example.com" or "192.168.1.1")
+        port: TLS port (default 443)
+        timeout: Connection timeout in seconds (default 10.0)
+    """
+    import ssl
+    import socket
+    from datetime import datetime, timezone
+
+    findings: list[str] = []
+    structured: dict = {"host": host, "port": port}
+
+    # Two-pass strategy: first try with system CA verification (CERT_REQUIRED)
+    # so Python parses the full cert dict. If that fails (self-signed / unknown
+    # CA), fall back to CERT_NONE to at least capture cipher and protocol.
+    cert: dict = {}
+    cipher_info: tuple | None = None
+    version: str | None = None
+    cert_verified: bool = False
+
+    # Pass 1 — CA-verified context (populates getpeercert() dict)
+    ctx_verify = ssl.create_default_context()
+    ctx_verify.check_hostname = False  # hostname check done separately below
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
+            with ctx_verify.wrap_socket(raw, server_hostname=host) as tls:
+                cert = tls.getpeercert() or {}
+                cipher_info = tls.cipher()
+                version = tls.version()
+                cert_verified = True
+    except ssl.SSLCertVerificationError:
+        # Pass 2 — CERT_NONE fallback for self-signed / private CA certs
+        ctx_none = ssl.create_default_context()
+        ctx_none.check_hostname = False
+        ctx_none.verify_mode = ssl.CERT_NONE
+        try:
+            with socket.create_connection((host, port), timeout=timeout) as raw:
+                with ctx_none.wrap_socket(raw, server_hostname=host) as tls:
+                    cert = {}  # empty — CERT_NONE doesn't populate the dict
+                    cipher_info = tls.cipher()
+                    version = tls.version()
+                    cert_verified = False
+            findings.append("[MEDIUM] Certificate not trusted by system CA store — self-signed or private CA [WSTG-CRYP-01][ASVS-9.2.1]")
+        except Exception as exc:
+            return _auto_save(
+                "tls_scan",
+                f"TLS Scan: {host}:{port}\n\nConnection failed: {exc}",
+                {"host": host, "port": port, "error": str(exc)},
+            )
+    except Exception as exc:
+        return _auto_save(
+            "tls_scan",
+            f"TLS Scan: {host}:{port}\n\nConnection failed: {exc}",
+            {"host": host, "port": port, "error": str(exc)},
+        )
+
+    proto = version or "Unknown"
+    cipher = cipher_info[0] if cipher_info else "Unknown"
+    cipher_bits = cipher_info[2] if cipher_info and len(cipher_info) > 2 else None
+
+    structured["protocol"] = proto
+    structured["cipher"] = cipher
+    structured["cipher_bits"] = cipher_bits
+
+    if proto in ("SSLv3", "TLSv1", "TLSv1.1"):
+        findings.append(f"[HIGH] Weak protocol in use: {proto} (minimum TLSv1.2 required) [WSTG-CRYP-01][ASVS-9.1.2]")
+    elif proto == "TLSv1.2":
+        findings.append(f"[INFO] Protocol: {proto} (TLSv1.3 preferred)")
+    else:
+        findings.append(f"[OK] Protocol: {proto}")
+
+    if cipher_bits and cipher_bits < 128:
+        findings.append(f"[HIGH] Weak cipher key size: {cipher_bits} bits [WSTG-CRYP-01][ASVS-9.1.3]")
+
+    subject_dict: dict = {}
+    issuer_dict: dict = {}
+    san: list[str] = []
+    not_after_str = ""
+    days_remaining: int | None = None
+
+    if cert:
+        subject_dict = dict(x[0] for x in cert.get("subject", []))
+        issuer_dict = dict(x[0] for x in cert.get("issuer", []))
+        san = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]
+        not_after_str = cert.get("notAfter", "")
+
+        if not_after_str:
+            try:
+                expiry = datetime.strptime(not_after_str, "%b %d %H:%M:%S %Y %Z")
+                expiry = expiry.replace(tzinfo=timezone.utc)
+                now = datetime.now(tz=timezone.utc)
+                days_remaining = (expiry - now).days
+                if days_remaining < 0:
+                    findings.append(f"[CRITICAL] Certificate EXPIRED {abs(days_remaining)} days ago [WSTG-CRYP-01][ASVS-9.2.1]")
+                elif days_remaining < 14:
+                    findings.append(f"[HIGH] Certificate expires in {days_remaining} days [WSTG-CRYP-01][ASVS-9.2.1]")
+                elif days_remaining < 30:
+                    findings.append(f"[MEDIUM] Certificate expires in {days_remaining} days [WSTG-CRYP-01][ASVS-9.2.1]")
+                else:
+                    findings.append(f"[OK] Certificate valid for {days_remaining} more days")
+            except ValueError:
+                pass
+
+        # Self-signed check
+        if subject_dict == issuer_dict:
+            findings.append(f"[HIGH] Self-signed certificate [WSTG-CRYP-01][ASVS-9.2.1]")
+            structured["self_signed"] = True
+        else:
+            structured["self_signed"] = False
+
+        # Hostname match
+        cn = subject_dict.get("commonName", "")
+        host_lower = host.lower()
+        in_san = any(
+            host_lower == s.lower() or
+            (s.startswith("*.") and host_lower.endswith(s[1:].lower()))
+            for s in san
+        )
+        in_cn = (
+            host_lower == cn.lower() or
+            (cn.startswith("*.") and host_lower.endswith(cn[1:].lower()))
+        )
+        if not in_san and not in_cn:
+            findings.append(
+                f"[MEDIUM] Hostname mismatch — '{host}' not in CN '{cn}' or SANs {san[:5]} [WSTG-CRYP-01][ASVS-9.2.1]"
+            )
+
+        structured.update({
+            "subject_cn": cn,
+            "issuer_cn": issuer_dict.get("commonName", ""),
+            "issuer_org": issuer_dict.get("organizationName", ""),
+            "not_after": not_after_str,
+            "days_remaining": days_remaining,
+            "san": san[:20],
+        })
+
+    structured["findings"] = findings
+
+    lines = [
+        f"TLS Scan: {host}:{port}",
+        f"  Protocol : {proto}",
+        f"  Cipher   : {cipher}" + (f" ({cipher_bits}-bit)" if cipher_bits else ""),
+        f"  Subject  : {subject_dict.get('commonName', '(none)')}",
+        f"  Issuer   : {issuer_dict.get('commonName', '(none)')} / {issuer_dict.get('organizationName', '')}",
+        f"  Expires  : {not_after_str or '(unknown)'}" +
+            (f" ({days_remaining} days)" if days_remaining is not None else ""),
+        "",
+    ]
+    if san:
+        lines.append(f"  SANs ({len(san)}): {', '.join(san[:8])}" +
+                     ("..." if len(san) > 8 else ""))
+        lines.append("")
+    lines.append("Findings:")
+    for f in findings:
+        lines.append(f"  {f}")
+    if not findings:
+        lines.append("  No issues detected.")
+
+    result = "\n".join(lines)
+    return _auto_save("tls_scan", result,
+                      {"host": host, "port": port, "protocol": proto,
+                       "findings": len([f for f in findings if not f.startswith("[OK") and not f.startswith("[INFO")])},
+                      structured_data=structured)
+
+
+# ── Engagement / Scope ──
+
+
+@mcp_server.tool()
+def create_engagement(
+    name: str,
+    scope_hosts: str,
+    scope_paths: str = "/",
+    allow_destructive: bool = False,
+    rate_limit_rps: int = 10,
+    notes: str = "",
+) -> str:
+    """
+    Create a new pentest engagement and set it as active. The engagement
+    records which hosts/CIDRs are in scope, which URL paths are allowed,
+    whether destructive tests (SQLi, CMDi, LFI) are approved, and a
+    suggested rate limit. Only one engagement is active at a time.
+
+    Args:
+        name: Human-readable engagement name (e.g., "Tardigrade local May 2026")
+        scope_hosts: Comma-separated in-scope targets. Accepts:
+                     - IP addresses: "127.0.0.1"
+                     - CIDR ranges: "192.168.1.0/24"
+                     - Hostnames: "example.com"
+                     - Wildcard domains: "*.example.com"
+        scope_paths: Comma-separated URL path prefixes in scope (default "/")
+        allow_destructive: Set True to approve injection/exploit tests
+                           (SQLi, CMDi, LFI). Defaults to False.
+        rate_limit_rps: Suggested max requests per second (default 10)
+        notes: Free-form operator notes
+    """
+    from ursa_minor.engagement import create as _create
+
+    record = _create(
+        name=name,
+        scope_hosts=scope_hosts,
+        scope_paths=scope_paths,
+        allow_destructive=allow_destructive,
+        rate_limit_rps=rate_limit_rps,
+        notes=notes,
+    )
+
+    lines = [
+        f"Engagement created: {record['name']}",
+        f"  ID               : {record['id']}",
+        f"  Scope hosts      : {', '.join(record['scope']['hosts'])}",
+        f"  Scope paths      : {', '.join(record['scope']['paths'])}",
+        f"  Allow destructive: {record['allow_destructive']}",
+        f"  Rate limit       : {record['rate_limit_rps']} req/s",
+    ]
+    if notes:
+        lines.append(f"  Notes            : {notes}")
+    lines.append("")
+    lines.append("This engagement is now active. Use check_scope(url) to validate targets before scanning.")
+
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
+def check_scope(url: str) -> str:
+    """
+    Check whether a URL is in scope for the currently active engagement.
+    Returns scope status, the engagement ID, and whether destructive tests
+    are approved. If no engagement is active, all URLs are considered in scope.
+
+    Args:
+        url: URL to check (e.g., "http://127.0.0.1:18069/admin")
+    """
+    from ursa_minor.engagement import check as _check
+
+    result = _check(url)
+
+    status = "IN SCOPE" if result["in_scope"] else "OUT OF SCOPE"
+    lines = [
+        f"Scope check: {url}",
+        f"  Status           : {status}",
+        f"  Reason           : {result['reason']}",
+        f"  Engagement       : {result['engagement_id'] or 'none (no active engagement)'}",
+        f"  Destructive tests: {'approved' if result['allow_destructive'] else 'not approved'}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
+def get_engagement() -> str:
+    """
+    Show details of the currently active engagement, or report that no
+    engagement is active.
+    """
+    from ursa_minor.engagement import get_active as _get, list_all as _list
+
+    record = _get()
+    if record is None:
+        recent = _list(limit=5)
+        lines = ["No active engagement."]
+        if recent:
+            lines.append("")
+            lines.append("Recent engagements:")
+            for r in recent:
+                lines.append(f"  [{r['status']}] {r['id']} — {r['name']}")
+        return "\n".join(lines)
+
+    lines = [
+        f"Active engagement: {record['name']}",
+        f"  ID               : {record['id']}",
+        f"  Created          : {record['created_at']}",
+        f"  Status           : {record['status']}",
+        f"  Scope hosts      : {', '.join(record['scope']['hosts'])}",
+        f"  Scope paths      : {', '.join(record['scope']['paths'])}",
+        f"  Allow destructive: {record['allow_destructive']}",
+        f"  Rate limit       : {record['rate_limit_rps']} req/s",
+    ]
+    if record.get("notes"):
+        lines.append(f"  Notes            : {record['notes']}")
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
+def close_engagement() -> str:
+    """
+    Close the active engagement and mark it as complete. Any future
+    check_scope calls will return in-scope (no active engagement = no guard).
+    """
+    from ursa_minor.engagement import close as _close
+
+    record = _close()
+    if record is None:
+        return "No active engagement to close."
+    return "\n".join([
+        f"Engagement closed: {record['name']}",
+        f"  ID        : {record['id']}",
+        f"  Closed at : {record['closed_at']}",
+    ])
+
+
+# ── API / OpenAPI Schema Scan ──
+
+
+@mcp_server.tool()
+def api_scan(
+    url: str,
+    spec_path: str | None = None,
+    auth_header: str | None = None,
+    cookies: str | None = None,
+    timeout: float = 10.0,
+) -> str:
+    """
+    Discover and test API endpoints using an OpenAPI / Swagger specification.
+
+    Discovery: if no spec_path is given, probes common spec locations
+    (/openapi.json, /swagger.json, /api/docs, /api/openapi.json,
+    /v1/openapi.json, /docs/swagger.json) and uses the first one found.
+
+    For each endpoint + parameter combination in the spec, generates targeted
+    probes for:
+    - Unauthenticated access to authenticated endpoints
+    - Missing/malformed required parameters (expect 4xx, flag 200/500)
+    - Basic injection canary in string parameters (quote + bracket)
+    - Enumerable numeric ID parameters (IDOR canary)
+
+    Supports authenticated scanning via auth_header or cookies.
+
+    Args:
+        url: Target base URL (e.g., "http://target.com" or "http://target.com/api")
+        spec_path: URL or path suffix to the OpenAPI spec. If omitted, auto-detected.
+        auth_header: Authorization header value (e.g., "Bearer eyJ...")
+        cookies: Cookie string (e.g., "session=abc123")
+        timeout: Request timeout in seconds (default 10.0)
+    """
+    import json as _json
+    import urllib.request
+    import urllib.error
+    import urllib.parse
+
+    _UA = "ursa-minor/1 api-scan"
+
+    def _get(path: str, extra_headers: dict | None = None) -> tuple[int, dict, str]:
+        try:
+            full = urllib.parse.urljoin(url.rstrip("/") + "/", path.lstrip("/"))
+            req = urllib.request.Request(full, method="GET")
+            req.add_header("User-Agent", _UA)
+            req.add_header("Accept", "application/json, */*")
+            if auth_header:
+                req.add_header("Authorization", auth_header)
+            if cookies:
+                req.add_header("Cookie", cookies)
+            if extra_headers:
+                for k, v in extra_headers.items():
+                    req.add_header(k, v)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                body = r.read(65536).decode("utf-8", errors="ignore")
+                return r.status, dict(r.headers), body
+        except urllib.error.HTTPError as e:
+            body = e.read(4096).decode("utf-8", errors="ignore") if e.fp else ""
+            return e.code, dict(e.headers) if e.headers else {}, body
+        except Exception as exc:
+            return 0, {}, str(exc)
+
+    # ── Spec discovery ────────────────────────────────────────────────────────
+    spec_candidates = [
+        spec_path,
+        "/openapi.json", "/openapi.yaml",
+        "/swagger.json", "/swagger/v1/swagger.json",
+        "/api/openapi.json", "/api/swagger.json",
+        "/api/docs", "/api/v1/openapi.json",
+        "/v1/openapi.json", "/docs/openapi.json",
+        "/api-docs", "/api-docs/swagger.json",
+    ]
+
+    spec_data: dict | None = None
+    spec_url_used: str = ""
+
+    for candidate in spec_candidates:
+        if not candidate:
+            continue
+        status, headers, body = _get(candidate)
+        if status == 200 and body.strip().startswith("{"):
+            try:
+                spec_data = _json.loads(body)
+                # Must have paths key to be a valid OpenAPI spec
+                if "paths" in spec_data:
+                    spec_url_used = candidate
+                    break
+                spec_data = None
+            except _json.JSONDecodeError:
+                pass
+
+    lines = [f"API Scan: {url}", ""]
+
+    if spec_data is None:
+        lines.append("No OpenAPI/Swagger spec found. Probed:")
+        for c in spec_candidates[1:]:
+            lines.append(f"  {c}")
+        lines.append("")
+        lines.append("To scan without a spec, use vuln_scan or dirbust instead.")
+        result = "\n".join(lines)
+        return _auto_save("api_scan", result, {"url": url, "spec_found": False})
+
+    lines.append(f"Spec: {spec_url_used}")
+    info = spec_data.get("info", {})
+    lines.append(f"Title: {info.get('title', '(none)')}  v{info.get('version', '?')}")
+
+    paths_obj = spec_data.get("paths", {})
+    lines.append(f"Endpoints in spec: {len(paths_obj)}")
+    lines.append("")
+
+    # Build server base path from spec
+    servers = spec_data.get("servers", [])
+    spec_base = ""
+    if servers and isinstance(servers, list):
+        spec_base = servers[0].get("url", "")
+        if spec_base.startswith("http"):
+            # Absolute URL in spec — strip to path only
+            spec_base = urllib.parse.urlparse(spec_base).path.rstrip("/")
+
+    findings: list[dict] = []
+    endpoints_tested = 0
+
+    for path_tmpl, methods_obj in list(paths_obj.items())[:40]:  # cap at 40 endpoints
+        if not isinstance(methods_obj, dict):
+            continue
+
+        endpoint_path = (spec_base + path_tmpl).replace("//", "/")
+
+        for method, op in methods_obj.items():
+            method = method.upper()
+            if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                continue
+            if not isinstance(op, dict):
+                continue
+
+            endpoints_tested += 1
+            security = op.get("security", spec_data.get("security", []))
+            requires_auth = bool(security)
+
+            # Collect parameters from spec
+            params = op.get("parameters", [])
+            # Also include path-level params
+            params = list(paths_obj[path_tmpl].get("parameters", [])) + params
+
+            # ── Test 1: unauthenticated access to secured endpoint ────────────
+            if requires_auth and not auth_header and not cookies:
+                test_path = path_tmpl  # use template, server will reject path params
+                status, _, _ = _get(test_path)
+                if status == 200:
+                    findings.append({
+                        "severity": "HIGH",
+                        "type": "auth_bypass_candidate",
+                        "endpoint": f"{method} {path_tmpl}",
+                        "detail": f"Spec marks endpoint as requiring auth but returned {status} without credentials",
+                        "wstg": "WSTG-ATHN-01",
+                    })
+                elif status not in (401, 403):
+                    findings.append({
+                        "severity": "LOW",
+                        "type": "unexpected_status_no_auth",
+                        "endpoint": f"{method} {path_tmpl}",
+                        "detail": f"Expected 401/403 without auth, got {status}",
+                        "wstg": "WSTG-ATHN-01",
+                    })
+
+            # ── Resolve concrete path (replace {param} with test values) ─────
+            concrete_path = path_tmpl
+            for p in params:
+                if p.get("in") == "path":
+                    pname = p.get("name", "id")
+                    ptype = p.get("schema", {}).get("type", "string")
+                    concrete_path = concrete_path.replace(
+                        f"{{{pname}}}", "1" if ptype in ("integer", "number") else "test"
+                    )
+
+            # ── Test 2: missing required params → expect 4xx, flag 200/500 ───
+            required_query = [
+                p for p in params
+                if p.get("in") == "query" and p.get("required", False)
+            ]
+            if required_query and method == "GET":
+                status, _, body = _get(concrete_path)
+                if status == 500:
+                    findings.append({
+                        "severity": "MEDIUM",
+                        "type": "missing_param_500",
+                        "endpoint": f"GET {path_tmpl}",
+                        "detail": "Server returns 500 when required query params are missing — may leak stack trace",
+                        "wstg": "WSTG-CONF-11",
+                    })
+                elif status == 200:
+                    findings.append({
+                        "severity": "LOW",
+                        "type": "missing_required_param_200",
+                        "endpoint": f"GET {path_tmpl}",
+                        "detail": "Endpoint returns 200 when required params are absent — validation may be missing",
+                        "wstg": "WSTG-INPV-13",
+                    })
+
+            # ── Test 3: injection canary in string query params ───────────────
+            string_params = [
+                p for p in params
+                if p.get("in") == "query"
+                and p.get("schema", {}).get("type", "string") == "string"
+            ]
+            for p in string_params[:3]:  # cap to 3 per endpoint
+                pname = p["name"]
+                canary_url = (
+                    urllib.parse.urljoin(url.rstrip("/") + "/", concrete_path.lstrip("/"))
+                    + f"?{pname}='"
+                )
+                try:
+                    req = urllib.request.Request(canary_url)
+                    req.add_header("User-Agent", _UA)
+                    if auth_header:
+                        req.add_header("Authorization", auth_header)
+                    if cookies:
+                        req.add_header("Cookie", cookies)
+                    with urllib.request.urlopen(req, timeout=timeout) as r:
+                        canary_status = r.status
+                        canary_body = r.read(4096).decode("utf-8", errors="ignore")
+                except urllib.error.HTTPError as e:
+                    canary_status = e.code
+                    canary_body = ""
+                except Exception:
+                    canary_status = 0
+                    canary_body = ""
+
+                import re as _re
+                if canary_status == 500 or _re.search(
+                    r"sql syntax|mysql|sqlite|postgresql|ORA-\d+|SQLSTATE",
+                    canary_body, _re.IGNORECASE
+                ):
+                    findings.append({
+                        "severity": "CRITICAL",
+                        "type": "sqli_canary",
+                        "endpoint": f"GET {path_tmpl}",
+                        "param": pname,
+                        "detail": f"Quote canary caused status {canary_status} — possible SQL injection",
+                        "wstg": "WSTG-INPV-05",
+                    })
+
+            # ── Test 4: IDOR canary on integer path/query params ─────────────
+            int_path_params = [
+                p for p in params
+                if p.get("schema", {}).get("type") in ("integer", "number")
+                and p.get("in") == "path"
+            ]
+            if int_path_params and method == "GET":
+                # Try id=0 and id=99999 — flag if both return 200 with same size
+                results_sizes = []
+                for test_val in ("0", "99999"):
+                    test_path_i = path_tmpl
+                    for p in int_path_params:
+                        test_path_i = test_path_i.replace(f"{{{p['name']}}}", test_val)
+                    s, _, b = _get(test_path_i)
+                    results_sizes.append((s, len(b)))
+                if (results_sizes[0][0] == 200 and results_sizes[1][0] == 200
+                        and abs(results_sizes[0][1] - results_sizes[1][1]) < 50):
+                    findings.append({
+                        "severity": "MEDIUM",
+                        "type": "idor_candidate",
+                        "endpoint": f"GET {path_tmpl}",
+                        "detail": "Integer ID parameters return 200 for arbitrary values (0, 99999) with similar body sizes — IDOR candidate",
+                        "wstg": "WSTG-ATHZ-04",
+                    })
+
+    # ── Format output ─────────────────────────────────────────────────────────
+    lines.append(f"Endpoints tested: {endpoints_tested}")
+    if auth_header or cookies:
+        lines.append(f"Auth: {'Authorization header' if auth_header else ''}{'  Cookies' if cookies else ''}".strip())
+    lines.append("")
+
+    if findings:
+        sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+        findings.sort(key=lambda x: sev_order.get(x.get("severity", "INFO"), 5))
+        lines.append(f"Findings ({len(findings)}):")
+        for f in findings:
+            ep = f.get("endpoint", "")
+            detail = f.get("detail", "")
+            wstg = f.get("wstg", "")
+            param = f" param={f['param']}" if "param" in f else ""
+            lines.append(f"  [{f['severity']}] {ep}{param} — {detail} [{wstg}]")
+    else:
+        lines.append("No findings detected.")
+
+    # Endpoint inventory
+    lines.append("")
+    lines.append("Endpoint inventory:")
+    for path_tmpl, methods_obj in list(paths_obj.items())[:40]:
+        if isinstance(methods_obj, dict):
+            meths = [m.upper() for m in methods_obj
+                     if m.upper() in ("GET","POST","PUT","PATCH","DELETE","OPTIONS")]
+            if meths:
+                lines.append(f"  {', '.join(meths):20s} {path_tmpl}")
+    if len(paths_obj) > 40:
+        lines.append(f"  ... and {len(paths_obj) - 40} more")
+
+    result = "\n".join(lines)
+    return _auto_save(
+        "api_scan", result,
+        {"url": url, "spec": spec_url_used, "endpoints": endpoints_tested,
+         "findings": len(findings), "spec_found": True},
+        structured_data=findings,
+    )
 
 
 if __name__ == "__main__":

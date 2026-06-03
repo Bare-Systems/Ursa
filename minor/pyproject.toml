@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 ursa = "ursa_minor.cli:main"
+ursa-netcollect = "ursa_minor.netcollect:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

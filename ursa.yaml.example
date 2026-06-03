@@ -19,6 +19,10 @@ major:
     auth:
       api_token: ""               # Bearer token for BearClawWeb -> Ursa API calls
 
+  # Pi-hole DNS insight (read-only) — per-client "what is it talking to"
+  pihole:
+    db_path: "/etc/pihole/pihole-FTL.db"  # FTL long-term DB; bind-mount read-only
+
   # Defaults for new implant sessions
   implant_defaults:
     beacon_interval: 5              # Seconds between beacons

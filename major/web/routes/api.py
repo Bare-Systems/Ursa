@@ -46,6 +46,20 @@ from major.db import (
     upsert_campaign_policy,
     verify_immutable_audit_chain,
 )
+from major.netinsight import (
+    device_count,
+    list_devices,
+    list_scans,
+    new_devices,
+    record_scan,
+    set_baseline,
+    set_device_trust,
+)
+from major.pihole import (
+    dns_overview,
+    top_domains as dns_top_domains,
+    top_talkers as dns_top_talkers,
+)
 from major.governance import (
     build_policy_remediation_recommendations,
     format_risk_matrix,
@@ -676,3 +690,90 @@ async def users_update(user_id: int, payload: dict, _: dict = Depends(require_ap
 @router.post("/users/{user_id}/password")
 async def users_password(user_id: int, payload: dict, _: dict = Depends(require_api_role)):
     return {"ok": set_user_password(user_id, str(payload.get("password", "")))}
+
+
+# ── Network Insight ──
+
+
+@router.post("/network/scan")
+async def network_ingest_scan(payload: dict, user: dict = Depends(require_api_role)):
+    """Ingest a device list from a network scan run by the host collector."""
+    devices = payload.get("devices")
+    if not isinstance(devices, list):
+        raise HTTPException(400, "Expected 'devices' to be a list")
+    summary = record_scan(
+        devices,
+        source=str(payload.get("source", "") or api_actor_for(user, "network/scan")),
+        target_range=str(payload.get("target_range", "") or ""),
+    )
+    return {"ok": True, **summary}
+
+
+@router.get("/network/devices")
+async def network_devices(only_untrusted: bool = False, _: dict = Depends(require_api_role)):
+    return {"counts": device_count(), "devices": list_devices(only_untrusted=only_untrusted)}
+
+
+@router.get("/network/devices/new")
+async def network_new_devices(_: dict = Depends(require_api_role)):
+    """Unknown/unbaselined devices — the 'new device joined' security signal."""
+    return {"counts": device_count(), "devices": new_devices()}
+
+
+@router.post("/network/baseline")
+async def network_set_baseline(_: dict = Depends(require_api_role)):
+    return {"ok": True, "trusted": set_baseline()}
+
+
+@router.patch("/network/devices/{mac}")
+async def network_set_trust(mac: str, payload: dict, _: dict = Depends(require_api_role)):
+    label = payload.get("label")
+    ok = set_device_trust(
+        mac,
+        trusted=bool(payload.get("trusted", True)),
+        label=None if label is None else str(label),
+    )
+    if not ok:
+        raise HTTPException(404, "Unknown device")
+    return {"ok": True}
+
+
+@router.get("/network/scans")
+async def network_scans(limit: int = 50, _: dict = Depends(require_api_role)):
+    return {"scans": list_scans(limit=limit)}
+
+
+# ── DNS Insight (Pi-hole) ──
+
+
+@router.get("/dns/overview")
+async def dns_insight_overview(since_hours: float = 24, _: dict = Depends(require_api_role)):
+    """Total/blocked/allowed query counts and block ratio over a time window."""
+    return dns_overview(since_hours=since_hours)
+
+
+@router.get("/dns/talkers")
+async def dns_insight_talkers(
+    since_hours: float = 24, limit: int = 10, _: dict = Depends(require_api_role)
+):
+    """Top clients by query volume, with per-client blocked/allowed split."""
+    return {
+        "overview": dns_overview(since_hours=since_hours),
+        "talkers": dns_top_talkers(since_hours=since_hours, limit=limit),
+    }
+
+
+@router.get("/dns/domains")
+async def dns_insight_domains(
+    since_hours: float = 24,
+    limit: int = 10,
+    client: str | None = None,
+    only_blocked: bool = False,
+    _: dict = Depends(require_api_role),
+):
+    """Most-queried domains overall, for one client, or only blocked ones."""
+    return {
+        "domains": dns_top_domains(
+            since_hours=since_hours, limit=limit, client=client, only_blocked=only_blocked
+        )
+    }

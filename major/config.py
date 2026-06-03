@@ -101,6 +101,13 @@ DEFAULTS = {
                 "enum/loot",
             ],
         },
+        # Pi-hole DNS insight — read-only access to the FTL long-term query DB
+        # for per-client "what is it talking to" telemetry (ROADMAP Phase 5B).
+        "pihole": {
+            # Path to pihole-FTL.db. On the homelab this is bind-mounted from the
+            # Pi-hole container; default matches a standard Pi-hole install.
+            "db_path": "/etc/pihole/pihole-FTL.db",
+        },
         "governance": {
             # Route policy decisions through the BearClaw enforcement path.
             # "local" performs local policy checks compatible with BearClaw inputs.

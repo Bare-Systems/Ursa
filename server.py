@@ -126,6 +126,15 @@ from major.governance import (  # noqa: E402
     process_bulk_approval_decisions,
     queue_task_with_policy,
 )
+from major.netinsight import (  # noqa: E402
+    device_count as _net_device_count,
+    list_devices as _net_list_devices,
+)
+from major.pihole import (  # noqa: E402
+    dns_overview as _dns_overview,
+    top_domains as _dns_top_domains,
+    top_talkers as _dns_top_talkers,
+)
 from implants.builder import Builder as _PayloadBuilder  # noqa: E402
 from implants.builder import PayloadConfig, auto_c2_url  # noqa: E402
 
@@ -326,6 +335,94 @@ def ursa_sessions(
         )
 
     lines.append(f"\n{len(sessions)} sessions total")
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
+def ursa_network_inventory(only_new: bool = False) -> str:
+    """
+    Show the home-network device inventory and flag unknown devices.
+
+    Reports the current device count and lists each device with its IP, MAC,
+    vendor, and whether it is trusted (part of the established baseline) or
+    new/unknown — the "a new device joined the network" security signal.
+
+    Args:
+        only_new: When true, list only untrusted/unknown devices.
+    """
+    counts = _net_device_count()
+    devices = _net_list_devices(only_untrusted=only_new)
+
+    header = (
+        f"Network devices: {counts['total']} total "
+        f"({counts['trusted']} trusted, {counts['untrusted']} unknown)"
+    )
+    if not devices:
+        scope = "unknown devices" if only_new else "devices"
+        return f"{header}\n\nNo {scope} recorded yet. Run a scan and ingest it."
+
+    lines = [
+        header,
+        "",
+        f"{'IP':<16} {'MAC':<19} {'Vendor':<14} {'Label':<14} {'Trust':<8} Last Seen",
+        "-" * 95,
+    ]
+    for d in devices:
+        trust = "trusted" if d.get("trusted") else "UNKNOWN"
+        label = d.get("label") or "-"
+        lines.append(
+            f"{(d.get('ip') or '-'):<16} {d['mac']:<19} "
+            f"{(d.get('vendor') or '-')[:14]:<14} {label[:14]:<14} {trust:<8} "
+            f"{_time_ago(d['last_seen'])}"
+        )
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
+def ursa_dns_talkers(since_hours: float = 24, limit: int = 10, client: str = "") -> str:
+    """
+    Show which devices are talking the most DNS, and to where (via Pi-hole).
+
+    Answers "what is each client on my network actually contacting" using the
+    DNS query log Pi-hole already keeps. Reports the blocked-vs-allowed ratio,
+    the top talkers by query volume, and — when a client is given — that
+    client's most-queried domains.
+
+    Args:
+        since_hours: Look-back window in hours (default 24).
+        limit: Max rows for talkers/domains (default 10).
+        client: Optional client IP to drill into its top domains.
+    """
+    ov = _dns_overview(since_hours=since_hours)
+    if not ov.get("available"):
+        return (
+            "Pi-hole DNS insight is unavailable — the FTL database could not be "
+            "read. Check the configured pihole.db_path and that it is mounted."
+        )
+
+    pct = round(ov["block_ratio"] * 100, 1)
+    lines = [
+        f"DNS over last {ov['since_hours']}h: {ov['total']} queries from "
+        f"{ov['clients']} client(s), {ov['blocked']} blocked ({pct}%).",
+    ]
+
+    if client:
+        domains = _dns_top_domains(since_hours=since_hours, limit=limit, client=client)
+        lines.append("")
+        lines.append(f"Top domains for {client}:")
+        if not domains:
+            lines.append("  (no queries in window)")
+        for d in domains:
+            lines.append(f"  {d['count']:>6}  {d['domain']}")
+        return "\n".join(lines)
+
+    talkers = _dns_top_talkers(since_hours=since_hours, limit=limit)
+    lines.append("")
+    lines.append(f"{'Client':<18} {'Queries':>8} {'Blocked':>8} {'Block%':>7}")
+    lines.append("-" * 45)
+    for t in talkers:
+        tpct = round(t["block_ratio"] * 100, 1)
+        lines.append(f"{t['client']:<18} {t['total']:>8} {t['blocked']:>8} {tpct:>6}%")
     return "\n".join(lines)
 
 

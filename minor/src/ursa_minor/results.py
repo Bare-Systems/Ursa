@@ -18,6 +18,11 @@ from pathlib import Path
 
 DEFAULT_RESULTS_DIR = Path.home() / ".ursa" / "results"
 
+# Tools whose results contain sensitive credential data. Excluded from
+# unfiltered listings to prevent inadvertent exposure via list_scan_results.
+# Retrievable directly by result ID or by passing tool_filter explicitly.
+_SENSITIVE_TOOLS = {"crack_hash", "credential_spray"}
+
 
 def _get_results_dir() -> Path:
     """Get results directory, creating it if needed."""
@@ -100,7 +105,14 @@ def list_results(
         try:
             with open(filepath) as f:
                 record = json.load(f)
-            if tool_filter and tool_filter.lower() not in record.get("tool", "").lower():
+            tool = record.get("tool", "")
+            # Suppress sensitive credential results unless caller explicitly
+            # asked for that tool by name.
+            if tool in _SENSITIVE_TOOLS and (
+                tool_filter is None or tool_filter.lower() not in tool.lower()
+            ):
+                continue
+            if tool_filter and tool_filter.lower() not in tool.lower():
                 continue
             if since and record.get("timestamp", 0) < since:
                 continue
@@ -306,6 +318,69 @@ def export_html(result_id: str) -> str:
   <p class="footer">Ursa Minor Recon Toolkit — Bare Systems</p>
 </body>
 </html>"""
+
+
+def diff_results(baseline_id: str, current_id: str) -> dict:
+    """Diff two saved scan results and return a structured delta.
+
+    Compares the ``structured_data`` findings lists of two results saved by
+    the same tool.  Findings are normalised to strings for comparison —
+    structured dicts are serialised as JSON lines.  Returns a dict with keys:
+
+    - ``baseline_id``, ``current_id``: the two result IDs
+    - ``baseline_tool``, ``current_tool``: tool names
+    - ``new_findings``: items in current but not in baseline
+    - ``fixed_findings``: items in baseline but not in current
+    - ``unchanged_count``: count of items present in both
+    - ``error``: non-empty string if either result is missing
+
+    Args:
+        baseline_id: Result ID of the earlier (reference) scan.
+        current_id:  Result ID of the newer scan to compare against.
+    """
+    baseline_rec = get_result(baseline_id)
+    current_rec = get_result(current_id)
+
+    errors = []
+    if not baseline_rec:
+        errors.append(f"Baseline result '{baseline_id}' not found")
+    if not current_rec:
+        errors.append(f"Current result '{current_id}' not found")
+    if errors:
+        return {"error": "; ".join(errors), "baseline_id": baseline_id, "current_id": current_id}
+
+    def _to_set(rec: dict) -> set[str]:
+        sd = rec.get("structured_data")
+        if sd is None:
+            # Fall back to non-empty lines from raw text result
+            return {line.strip() for line in rec.get("result", "").splitlines() if line.strip()}
+        if isinstance(sd, list):
+            return {json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item) for item in sd}
+        if isinstance(sd, dict):
+            return {json.dumps(sd, sort_keys=True)}
+        return {str(sd)}
+
+    baseline_set = _to_set(baseline_rec)
+    current_set = _to_set(current_rec)
+
+    new_findings = sorted(current_set - baseline_set)
+    fixed_findings = sorted(baseline_set - current_set)
+    unchanged_count = len(baseline_set & current_set)
+
+    return {
+        "baseline_id": baseline_id,
+        "current_id": current_id,
+        "baseline_tool": baseline_rec.get("tool", "unknown"),
+        "current_tool": current_rec.get("tool", "unknown"),
+        "baseline_timestamp": baseline_rec.get("timestamp_str", ""),
+        "current_timestamp": current_rec.get("timestamp_str", ""),
+        "new_findings": new_findings,
+        "fixed_findings": fixed_findings,
+        "unchanged_count": unchanged_count,
+        "new_count": len(new_findings),
+        "fixed_count": len(fixed_findings),
+        "error": "",
+    }
 
 
 def export_engagement_report(

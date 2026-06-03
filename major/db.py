@@ -220,6 +220,31 @@ def init_db():
             value TEXT NOT NULL,
             updated_at REAL NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS network_devices (
+            mac TEXT PRIMARY KEY,
+            ip TEXT DEFAULT '',
+            vendor TEXT DEFAULT '',
+            hostname TEXT DEFAULT '',
+            label TEXT DEFAULT '',
+            trusted INTEGER NOT NULL DEFAULT 0,
+            first_seen REAL NOT NULL,
+            last_seen REAL NOT NULL,
+            times_seen INTEGER NOT NULL DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS network_scans (
+            id TEXT PRIMARY KEY,
+            started_at REAL NOT NULL,
+            source TEXT DEFAULT '',
+            target_range TEXT DEFAULT '',
+            device_count INTEGER NOT NULL DEFAULT 0,
+            new_count INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_network_devices_trusted ON network_devices(trusted);
+        CREATE INDEX IF NOT EXISTS idx_network_devices_last_seen ON network_devices(last_seen);
+        CREATE INDEX IF NOT EXISTS idx_network_scans_started_at ON network_scans(started_at);
     """)
     _ensure_sessions_columns(db)
     _ensure_campaign_policy_columns(db)
