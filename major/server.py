@@ -42,8 +42,6 @@ from implants.builder import Builder as _PayloadBuilder
 from major.cert import build_ssl_context, ensure_cert
 from major.config import get_config, reload_config
 from major.crypto import UrsaCrypto, generate_session_key
-from major.profiles import TrafficProfile, get_profile
-from major.redirector import redirector_from_config
 from major.db import (
     complete_task,
     create_session,
@@ -60,6 +58,8 @@ from major.db import (
     update_session_checkin,
     update_session_info,
 )
+from major.profiles import TrafficProfile, get_profile
+from major.redirector import redirector_from_config
 
 # ── Configuration (loaded from ursa.yaml with defaults) ──
 

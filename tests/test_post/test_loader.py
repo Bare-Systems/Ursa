@@ -1,6 +1,5 @@
 """Tests for the PostLoader module registry and dispatcher."""
 
-from post.base import ModuleResult
 from post.loader import PostLoader
 
 

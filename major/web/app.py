@@ -1,23 +1,20 @@
 """Ursa Major — control-plane service for BearClaw and MCP operators."""
 
-from contextlib import asynccontextmanager
 import json
 import re
 import sys
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.types import Receive, Scope, Send
-from starlette.middleware.sessions import SessionMiddleware
 
 from major.config import get_config
-from major.db import get_user_by_id
 from major.web.auth import authenticate_api_request
 
 # Ensure project root is importable

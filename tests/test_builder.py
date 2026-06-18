@@ -505,12 +505,12 @@ class TestBeaconUARotation:
             assert len(ua) > 20
 
     def test_beacon_picks_ua_from_pool(self):
-        from implants.beacon import UrsaBeacon, _USER_AGENTS
+        from implants.beacon import _USER_AGENTS, UrsaBeacon
         b = UrsaBeacon("http://127.0.0.1:6708", sandbox_check=False)
         assert b.user_agent in _USER_AGENTS
 
     def test_different_instances_may_pick_different_uas(self):
-        from implants.beacon import UrsaBeacon, _USER_AGENTS
+        from implants.beacon import _USER_AGENTS, UrsaBeacon
         # With 7 choices, chance all 10 picks are the same is (1/7)^9 ≈ negligible
         if len(_USER_AGENTS) < 2:
             pytest.skip("Only one UA in pool")
@@ -541,6 +541,7 @@ class TestBeaconJitter:
     def test_jitter_sleep_stays_above_minimum(self):
         """_jitter_sleep must never pass less than 1 second to _obfuscated_sleep."""
         import unittest.mock as mock
+
         from implants import beacon as beacon_mod
         from implants.beacon import UrsaBeacon
         b = UrsaBeacon("http://127.0.0.1:6708", interval=1, jitter=0.9,
@@ -567,6 +568,7 @@ class TestBeaconProcessName:
     def test_process_name_changes_argv0(self):
         """Passing process_name should mutate sys.argv[0]."""
         import sys
+
         from implants.beacon import UrsaBeacon
         original = sys.argv[0]
         UrsaBeacon("http://127.0.0.1:6708", sandbox_check=False,
@@ -577,6 +579,7 @@ class TestBeaconProcessName:
     def test_process_name_empty_string_no_change(self):
         """Empty string process_name leaves argv[0] unchanged."""
         import sys
+
         from implants.beacon import UrsaBeacon
         original = sys.argv[0]
         UrsaBeacon("http://127.0.0.1:6708", sandbox_check=False, process_name="")
@@ -664,6 +667,7 @@ class TestGoTemplate:
     def test_go_template_compiles(self, tmp_path):
         """Build the template and compile it with 'go build'."""
         import subprocess
+
         from implants.builder import Builder, PayloadConfig
         cfg = PayloadConfig(
             c2_url="http://127.0.0.1:6708",
@@ -689,6 +693,7 @@ class TestGoTemplate:
     def test_go_template_cross_compiles_linux(self, tmp_path):
         """Cross-compile for Linux/amd64 from any host."""
         import subprocess
+
         from implants.builder import Builder, PayloadConfig
         cfg = PayloadConfig(c2_url="http://127.0.0.1:6708", template="http_go")
         src_path = Builder().build_to_file(cfg, tmp_path / "agent.go")

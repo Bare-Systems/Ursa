@@ -8,7 +8,6 @@ Covers the 11 implemented modules:
 """
 
 import platform
-import sys
 
 import pytest
 
@@ -61,7 +60,6 @@ class TestImplementedMetadata:
 
     @pytest.mark.parametrize("name", IMPLEMENTED_MODULES)
     def test_module_is_subclass_of_post_module(self, name):
-        import importlib
         # Resolve the class from the loader registry
         loader = PostLoader()
         modules = {m["name"]: m for m in loader.list_modules()}

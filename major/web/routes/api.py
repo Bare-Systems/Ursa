@@ -46,6 +46,14 @@ from major.db import (
     upsert_campaign_policy,
     verify_immutable_audit_chain,
 )
+from major.governance import (
+    build_policy_remediation_recommendations,
+    format_risk_matrix,
+    get_policy_remediation_plan,
+    process_approval_decision,
+    process_bulk_approval_decisions,
+    queue_task_with_policy,
+)
 from major.netinsight import (
     device_count,
     list_devices,
@@ -57,16 +65,12 @@ from major.netinsight import (
 )
 from major.pihole import (
     dns_overview,
-    top_domains as dns_top_domains,
-    top_talkers as dns_top_talkers,
 )
-from major.governance import (
-    build_policy_remediation_recommendations,
-    format_risk_matrix,
-    get_policy_remediation_plan,
-    process_approval_decision,
-    process_bulk_approval_decisions,
-    queue_task_with_policy,
+from major.pihole import (
+    top_domains as dns_top_domains,
+)
+from major.pihole import (
+    top_talkers as dns_top_talkers,
 )
 from major.web.auth import api_actor_for, require_api_role
 
@@ -169,7 +173,7 @@ def _campaign_detail_payload(campaign_name: str, *, status_filter: str = "", own
 
 
 @router.get("/overview")
-async def overview(_: dict = Depends(require_api_role)):
+async def overview(_: dict = REQUIRE_API_ROLE):
     sessions = list_sessions()
     active = [s for s in sessions if s["status"] == "active"]
     stale = [s for s in sessions if s["status"] == "stale"]
@@ -262,12 +266,12 @@ async def overview(_: dict = Depends(require_api_role)):
 
 
 @router.get("/sessions")
-async def sessions_index(status: str | None = None, campaign: str | None = None, tag: str | None = None, _: dict = Depends(require_api_role)):
+async def sessions_index(status: str | None = None, campaign: str | None = None, tag: str | None = None, _: dict = REQUIRE_API_ROLE):
     return {"sessions": list_sessions(status=status, campaign=campaign, tag=tag)}
 
 
 @router.get("/sessions/{session_id}")
-async def sessions_show(session_id: str, _: dict = Depends(require_api_role)):
+async def sessions_show(session_id: str, _: dict = REQUIRE_API_ROLE):
     session = get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
@@ -280,7 +284,7 @@ async def sessions_show(session_id: str, _: dict = Depends(require_api_role)):
 
 
 @router.patch("/sessions/{session_id}/context")
-async def sessions_context(session_id: str, payload: dict, user: dict = Depends(require_api_role)):
+async def sessions_context(session_id: str, payload: dict, user: dict = REQUIRE_API_ROLE):
     update_session_info(
         session_id,
         campaign=str(payload.get("campaign", "")).strip(),
@@ -290,7 +294,7 @@ async def sessions_context(session_id: str, payload: dict, user: dict = Depends(
 
 
 @router.post("/sessions/{session_id}/kill")
-async def sessions_kill(session_id: str, user: dict = Depends(require_api_role)):
+async def sessions_kill(session_id: str, user: dict = REQUIRE_API_ROLE):
     decision = queue_task_with_policy(
         session_id=session_id,
         task_type="kill",
@@ -304,7 +308,7 @@ async def sessions_kill(session_id: str, user: dict = Depends(require_api_role))
 
 
 @router.post("/sessions/{session_id}/tasks")
-async def sessions_task(session_id: str, payload: dict, user: dict = Depends(require_api_role)):
+async def sessions_task(session_id: str, payload: dict, user: dict = REQUIRE_API_ROLE):
     task_type = str(payload.get("task_type", "shell")).strip() or "shell"
     command = str(payload.get("command", "")).strip()
     args = {"command": command} if task_type == "shell" and command else dict(payload.get("args") or {})
@@ -325,13 +329,13 @@ async def tasks_index(
     status: str | None = None,
     campaign: str | None = None,
     tag: str | None = None,
-    _: dict = Depends(require_api_role),
+    _: dict = REQUIRE_API_ROLE,
 ):
     return {"tasks": list_tasks(session_id=session_id, status=status, campaign=campaign, tag=tag, limit=100)}
 
 
 @router.get("/tasks/{task_id}")
-async def tasks_show(task_id: str, _: dict = Depends(require_api_role)):
+async def tasks_show(task_id: str, _: dict = REQUIRE_API_ROLE):
     task = get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
@@ -340,12 +344,12 @@ async def tasks_show(task_id: str, _: dict = Depends(require_api_role)):
 
 
 @router.get("/files")
-async def files_index(session_id: str | None = None, _: dict = Depends(require_api_role)):
+async def files_index(session_id: str | None = None, _: dict = REQUIRE_API_ROLE):
     return {"files": list_files(session_id=session_id)}
 
 
 @router.get("/files/{file_id}/download")
-async def files_download(file_id: str, _: dict = Depends(require_api_role)):
+async def files_download(file_id: str, _: dict = REQUIRE_API_ROLE):
     file_row = get_file(file_id)
     if not file_row:
         raise HTTPException(404, "File not found")
@@ -360,13 +364,13 @@ async def events_index(
     session_id: str | None = None,
     campaign: str | None = None,
     tag: str | None = None,
-    _: dict = Depends(require_api_role),
+    _: dict = REQUIRE_API_ROLE,
 ):
     return {"events": get_events(limit=200, level=level, session_id=session_id, campaign=campaign, tag=tag)}
 
 
 @router.get("/campaigns")
-async def campaigns_index(_: dict = Depends(require_api_role)):
+async def campaigns_index(_: dict = REQUIRE_API_ROLE):
     sessions = list_sessions()
     tasks = list_tasks(limit=2000)
     events = get_events(limit=2000)
@@ -387,12 +391,12 @@ async def campaigns_index(_: dict = Depends(require_api_role)):
 
 
 @router.get("/campaigns/playbooks")
-async def campaigns_playbooks(_: dict = Depends(require_api_role)):
+async def campaigns_playbooks(_: dict = REQUIRE_API_ROLE):
     return {"playbooks": list_campaign_playbooks(limit=300)}
 
 
 @router.post("/campaigns/playbooks")
-async def campaigns_playbooks_save(payload: dict, _: dict = Depends(require_api_role)):
+async def campaigns_playbooks_save(payload: dict, _: dict = REQUIRE_API_ROLE):
     playbook = upsert_campaign_playbook(
         str(payload.get("name", "")).strip(),
         payload.get("items") or [],
@@ -402,12 +406,12 @@ async def campaigns_playbooks_save(payload: dict, _: dict = Depends(require_api_
 
 
 @router.delete("/campaigns/playbooks/{name}")
-async def campaigns_playbooks_delete(name: str, _: dict = Depends(require_api_role)):
+async def campaigns_playbooks_delete(name: str, _: dict = REQUIRE_API_ROLE):
     return {"ok": delete_campaign_playbook(name.strip())}
 
 
 @router.get("/campaigns/playbooks/{name}")
-async def campaigns_playbook_show(name: str, _: dict = Depends(require_api_role)):
+async def campaigns_playbook_show(name: str, _: dict = REQUIRE_API_ROLE):
     playbook = get_campaign_playbook(name.strip())
     if not playbook:
         raise HTTPException(404, "Playbook not found")
@@ -421,7 +425,7 @@ async def campaigns_show(
     owner: str = "",
     q: str = "",
     sort: str = "created_desc",
-    _: dict = Depends(require_api_role),
+    _: dict = REQUIRE_API_ROLE,
 ):
     if status and status not in CHECKLIST_STATUSES:
         status = ""
@@ -431,7 +435,7 @@ async def campaigns_show(
 
 
 @router.post("/campaigns/{campaign_name}/notes")
-async def campaigns_add_note(campaign_name: str, payload: dict, user: dict = Depends(require_api_role)):
+async def campaigns_add_note(campaign_name: str, payload: dict, user: dict = REQUIRE_API_ROLE):
     note = str(payload.get("note", "")).strip()
     if note:
         add_campaign_note(campaign_name, note, author=api_actor_for(user, "campaigns/note"))
@@ -439,12 +443,12 @@ async def campaigns_add_note(campaign_name: str, payload: dict, user: dict = Dep
 
 
 @router.delete("/campaigns/{campaign_name}/notes/{note_id}")
-async def campaigns_delete_note(campaign_name: str, note_id: int, _: dict = Depends(require_api_role)):
+async def campaigns_delete_note(campaign_name: str, note_id: int, _: dict = REQUIRE_API_ROLE):
     return {"ok": delete_campaign_note(note_id), "campaign_name": campaign_name}
 
 
 @router.post("/campaigns/{campaign_name}/checklist")
-async def campaigns_add_checklist(campaign_name: str, payload: dict, user: dict = Depends(require_api_role)):
+async def campaigns_add_checklist(campaign_name: str, payload: dict, user: dict = REQUIRE_API_ROLE):
     add_campaign_checklist_item(
         campaign=campaign_name,
         title=str(payload.get("title", "")).strip(),
@@ -457,7 +461,7 @@ async def campaigns_add_checklist(campaign_name: str, payload: dict, user: dict 
 
 
 @router.patch("/campaigns/{campaign_name}/checklist/{item_id}")
-async def campaigns_update_checklist(campaign_name: str, item_id: int, payload: dict, user: dict = Depends(require_api_role)):
+async def campaigns_update_checklist(campaign_name: str, item_id: int, payload: dict, user: dict = REQUIRE_API_ROLE):
     updates = {}
     for key in ("title", "details", "status", "owner"):
         if key in payload:
@@ -472,12 +476,12 @@ async def campaigns_update_checklist(campaign_name: str, item_id: int, payload: 
 
 
 @router.delete("/campaigns/{campaign_name}/checklist/{item_id}")
-async def campaigns_delete_checklist(campaign_name: str, item_id: int, user: dict = Depends(require_api_role)):
+async def campaigns_delete_checklist(campaign_name: str, item_id: int, user: dict = REQUIRE_API_ROLE):
     return {"ok": delete_campaign_checklist_item(item_id, actor=api_actor_for(user, "campaigns/checklist-delete")), "campaign_name": campaign_name}
 
 
 @router.patch("/campaigns/{campaign_name}/checklist")
-async def campaigns_bulk_checklist(campaign_name: str, payload: dict, user: dict = Depends(require_api_role)):
+async def campaigns_bulk_checklist(campaign_name: str, payload: dict, user: dict = REQUIRE_API_ROLE):
     action_status = str(payload.get("action_status", "")).strip().lower()
     if action_status not in CHECKLIST_STATUSES:
         raise HTTPException(400, "Invalid checklist status")
@@ -497,7 +501,7 @@ async def campaigns_bulk_checklist(campaign_name: str, payload: dict, user: dict
 
 
 @router.post("/campaigns/{campaign_name}/playbook/apply")
-async def campaigns_apply_playbook(campaign_name: str, payload: dict, _: dict = Depends(require_api_role)):
+async def campaigns_apply_playbook(campaign_name: str, payload: dict, _: dict = REQUIRE_API_ROLE):
     return apply_campaign_playbook(
         campaign=campaign_name,
         playbook_name=str(payload.get("playbook", "")).strip(),
@@ -507,7 +511,7 @@ async def campaigns_apply_playbook(campaign_name: str, payload: dict, _: dict = 
 
 
 @router.post("/campaigns/{campaign_name}/playbook/snapshot")
-async def campaigns_snapshot_playbook(campaign_name: str, payload: dict, _: dict = Depends(require_api_role)):
+async def campaigns_snapshot_playbook(campaign_name: str, payload: dict, _: dict = REQUIRE_API_ROLE):
     return snapshot_campaign_checklist_to_playbook(
         campaign=campaign_name,
         playbook_name=str(payload.get("playbook_name", "")).strip(),
@@ -517,7 +521,7 @@ async def campaigns_snapshot_playbook(campaign_name: str, payload: dict, _: dict
 
 
 @router.get("/campaigns/{campaign_name}/handoff")
-async def campaigns_handoff(campaign_name: str, _: dict = Depends(require_api_role)):
+async def campaigns_handoff(campaign_name: str, _: dict = REQUIRE_API_ROLE):
     return _campaign_detail_payload(campaign_name)
 
 
@@ -527,7 +531,7 @@ async def governance_index(
     campaign: str | None = None,
     tag: str | None = None,
     risk_level: str | None = None,
-    _: dict = Depends(require_api_role),
+    _: dict = REQUIRE_API_ROLE,
 ):
     policy_alerts = evaluate_campaign_policy_alerts(campaign=campaign)
     return {
@@ -546,7 +550,7 @@ async def governance_index(
 
 
 @router.post("/governance/approvals/{approval_id}/approve")
-async def governance_approve(approval_id: str, payload: dict, user: dict = Depends(require_api_role)):
+async def governance_approve(approval_id: str, payload: dict, user: dict = REQUIRE_API_ROLE):
     return process_approval_decision(
         approval_id=approval_id,
         approved=True,
@@ -556,7 +560,7 @@ async def governance_approve(approval_id: str, payload: dict, user: dict = Depen
 
 
 @router.post("/governance/approvals/{approval_id}/reject")
-async def governance_reject(approval_id: str, payload: dict, user: dict = Depends(require_api_role)):
+async def governance_reject(approval_id: str, payload: dict, user: dict = REQUIRE_API_ROLE):
     return process_approval_decision(
         approval_id=approval_id,
         approved=False,
@@ -566,7 +570,7 @@ async def governance_reject(approval_id: str, payload: dict, user: dict = Depend
 
 
 @router.post("/governance/approvals/bulk")
-async def governance_bulk(payload: dict, user: dict = Depends(require_api_role)):
+async def governance_bulk(payload: dict, user: dict = REQUIRE_API_ROLE):
     return process_bulk_approval_decisions(
         approved=str(payload.get("decision", "approve")).strip().lower() == "approve",
         actor=api_actor_for(user, "governance/bulk"),
@@ -579,7 +583,7 @@ async def governance_bulk(payload: dict, user: dict = Depends(require_api_role))
 
 
 @router.post("/governance/policy")
-async def governance_policy(payload: dict, user: dict = Depends(require_api_role)):
+async def governance_policy(payload: dict, user: dict = REQUIRE_API_ROLE):
     campaign = str(payload.get("campaign", "")).strip()
     if not campaign:
         raise HTTPException(400, "Campaign is required")
@@ -597,12 +601,12 @@ async def governance_policy(payload: dict, user: dict = Depends(require_api_role
 
 
 @router.delete("/governance/policy/{campaign}")
-async def governance_delete_policy(campaign: str, _: dict = Depends(require_api_role)):
+async def governance_delete_policy(campaign: str, _: dict = REQUIRE_API_ROLE):
     return {"ok": delete_campaign_policy(campaign.strip())}
 
 
 @router.post("/governance/remediation/apply")
-async def governance_apply_remediation(payload: dict, user: dict = Depends(require_api_role)):
+async def governance_apply_remediation(payload: dict, user: dict = REQUIRE_API_ROLE):
     strategy = str(payload.get("strategy", "reduce-critical")).strip().lower()
     if strategy == "reduce-critical":
         risk_level = "critical"
@@ -623,7 +627,7 @@ async def governance_apply_remediation(payload: dict, user: dict = Depends(requi
 
 
 @router.post("/governance/remediation/checklist")
-async def governance_remediation_checklist(payload: dict, user: dict = Depends(require_api_role)):
+async def governance_remediation_checklist(payload: dict, user: dict = REQUIRE_API_ROLE):
     campaign = str(payload.get("campaign", "")).strip()
     if not campaign:
         raise HTTPException(400, "Campaign is required")
@@ -650,7 +654,7 @@ async def governance_remediation_checklist(payload: dict, user: dict = Depends(r
 
 
 @router.get("/governance/report")
-async def governance_report(_: dict = Depends(require_api_role)):
+async def governance_report(_: dict = REQUIRE_API_ROLE):
     return {
         "counts": {
             "policies": len(list_campaign_policies()),
@@ -664,12 +668,12 @@ async def governance_report(_: dict = Depends(require_api_role)):
 
 
 @router.get("/users")
-async def users_index(_: dict = Depends(require_api_role)):
+async def users_index(_: dict = REQUIRE_API_ROLE):
     return {"users": list_users(limit=500)}
 
 
 @router.post("/users")
-async def users_create(payload: dict, _: dict = Depends(require_api_role)):
+async def users_create(payload: dict, _: dict = REQUIRE_API_ROLE):
     return {
         "user": create_user(
             str(payload.get("username", "")).strip(),
@@ -681,14 +685,14 @@ async def users_create(payload: dict, _: dict = Depends(require_api_role)):
 
 
 @router.patch("/users/{user_id}")
-async def users_update(user_id: int, payload: dict, _: dict = Depends(require_api_role)):
+async def users_update(user_id: int, payload: dict, _: dict = REQUIRE_API_ROLE):
     ok = update_user_role_status(user_id, role=payload.get("role"), is_active=payload.get("is_active"))
     user = get_user_by_id(user_id)
     return {"ok": ok, "user": user}
 
 
 @router.post("/users/{user_id}/password")
-async def users_password(user_id: int, payload: dict, _: dict = Depends(require_api_role)):
+async def users_password(user_id: int, payload: dict, _: dict = REQUIRE_API_ROLE):
     return {"ok": set_user_password(user_id, str(payload.get("password", "")))}
 
 
@@ -696,7 +700,7 @@ async def users_password(user_id: int, payload: dict, _: dict = Depends(require_
 
 
 @router.post("/network/scan")
-async def network_ingest_scan(payload: dict, user: dict = Depends(require_api_role)):
+async def network_ingest_scan(payload: dict, user: dict = REQUIRE_API_ROLE):
     """Ingest a device list from a network scan run by the host collector."""
     devices = payload.get("devices")
     if not isinstance(devices, list):
@@ -710,23 +714,23 @@ async def network_ingest_scan(payload: dict, user: dict = Depends(require_api_ro
 
 
 @router.get("/network/devices")
-async def network_devices(only_untrusted: bool = False, _: dict = Depends(require_api_role)):
+async def network_devices(only_untrusted: bool = False, _: dict = REQUIRE_API_ROLE):
     return {"counts": device_count(), "devices": list_devices(only_untrusted=only_untrusted)}
 
 
 @router.get("/network/devices/new")
-async def network_new_devices(_: dict = Depends(require_api_role)):
+async def network_new_devices(_: dict = REQUIRE_API_ROLE):
     """Unknown/unbaselined devices — the 'new device joined' security signal."""
     return {"counts": device_count(), "devices": new_devices()}
 
 
 @router.post("/network/baseline")
-async def network_set_baseline(_: dict = Depends(require_api_role)):
+async def network_set_baseline(_: dict = REQUIRE_API_ROLE):
     return {"ok": True, "trusted": set_baseline()}
 
 
 @router.patch("/network/devices/{mac}")
-async def network_set_trust(mac: str, payload: dict, _: dict = Depends(require_api_role)):
+async def network_set_trust(mac: str, payload: dict, _: dict = REQUIRE_API_ROLE):
     label = payload.get("label")
     ok = set_device_trust(
         mac,
@@ -739,7 +743,7 @@ async def network_set_trust(mac: str, payload: dict, _: dict = Depends(require_a
 
 
 @router.get("/network/scans")
-async def network_scans(limit: int = 50, _: dict = Depends(require_api_role)):
+async def network_scans(limit: int = 50, _: dict = REQUIRE_API_ROLE):
     return {"scans": list_scans(limit=limit)}
 
 
@@ -747,14 +751,14 @@ async def network_scans(limit: int = 50, _: dict = Depends(require_api_role)):
 
 
 @router.get("/dns/overview")
-async def dns_insight_overview(since_hours: float = 24, _: dict = Depends(require_api_role)):
+async def dns_insight_overview(since_hours: float = 24, _: dict = REQUIRE_API_ROLE):
     """Total/blocked/allowed query counts and block ratio over a time window."""
     return dns_overview(since_hours=since_hours)
 
 
 @router.get("/dns/talkers")
 async def dns_insight_talkers(
-    since_hours: float = 24, limit: int = 10, _: dict = Depends(require_api_role)
+    since_hours: float = 24, limit: int = 10, _: dict = REQUIRE_API_ROLE
 ):
     """Top clients by query volume, with per-client blocked/allowed split."""
     return {
@@ -769,7 +773,7 @@ async def dns_insight_domains(
     limit: int = 10,
     client: str | None = None,
     only_blocked: bool = False,
-    _: dict = Depends(require_api_role),
+    _: dict = REQUIRE_API_ROLE,
 ):
     """Most-queried domains overall, for one client, or only blocked ones."""
     return {

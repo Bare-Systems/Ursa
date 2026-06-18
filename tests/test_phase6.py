@@ -15,11 +15,8 @@ import ssl
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
 
 # ── Traffic Profiles ──────────────────────────────────────────────────────────
 
@@ -82,8 +79,9 @@ class TestTrafficProfile:
             assert prefix.startswith("/"), f"{name}: download_prefix should start with /"
 
     def test_get_profile_fallback(self):
-        from major.profiles import get_profile
         import warnings
+
+        from major.profiles import get_profile
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             profile = get_profile("nonexistent-profile-xyz")
@@ -91,7 +89,7 @@ class TestTrafficProfile:
         assert any("not found" in str(warning.message) for warning in w)
 
     def test_list_profiles_returns_all(self):
-        from major.profiles import list_profiles, PROFILES
+        from major.profiles import PROFILES, list_profiles
         result = list_profiles()
         assert len(result) == len(PROFILES)
         for entry in result:
@@ -141,24 +139,27 @@ class TestCertGeneration:
         assert b"BEGIN RSA PRIVATE KEY" in key_pem
 
     def test_cert_parseable(self):
-        from major.cert import generate_cert_pem
         from cryptography import x509
+
+        from major.cert import generate_cert_pem
         cert_pem, _ = generate_cert_pem(hostname="test.local")
         cert = x509.load_pem_x509_certificate(cert_pem)
         assert cert is not None
 
     def test_cert_cn_matches_hostname(self):
-        from major.cert import generate_cert_pem
         from cryptography import x509
         from cryptography.x509.oid import NameOID
+
+        from major.cert import generate_cert_pem
         cert_pem, _ = generate_cert_pem(hostname="myc2.example.com")
         cert = x509.load_pem_x509_certificate(cert_pem)
         cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
         assert cn == "myc2.example.com"
 
     def test_cert_has_san_with_hostname(self):
-        from major.cert import generate_cert_pem
         from cryptography import x509
+
+        from major.cert import generate_cert_pem
         cert_pem, _ = generate_cert_pem(hostname="myc2.example.com")
         cert = x509.load_pem_x509_certificate(cert_pem)
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
@@ -166,8 +167,9 @@ class TestCertGeneration:
         assert "myc2.example.com" in dns_names
 
     def test_cert_includes_extra_ip_san(self):
-        from major.cert import generate_cert_pem
         from cryptography import x509
+
+        from major.cert import generate_cert_pem
         cert_pem, _ = generate_cert_pem(hostname="c2.test", extra_sans=["10.0.0.5"])
         cert = x509.load_pem_x509_certificate(cert_pem)
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
@@ -175,8 +177,9 @@ class TestCertGeneration:
         assert ipaddress.ip_address("10.0.0.5") in ips
 
     def test_cert_includes_extra_dns_san(self):
-        from major.cert import generate_cert_pem
         from cryptography import x509
+
+        from major.cert import generate_cert_pem
         cert_pem, _ = generate_cert_pem(hostname="c2.test", extra_sans=["alt.example.com"])
         cert = x509.load_pem_x509_certificate(cert_pem)
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
@@ -184,8 +187,9 @@ class TestCertGeneration:
         assert "alt.example.com" in dns_names
 
     def test_cert_has_loopback_san(self):
-        from major.cert import generate_cert_pem
         from cryptography import x509
+
+        from major.cert import generate_cert_pem
         cert_pem, _ = generate_cert_pem(hostname="c2.test")
         cert = x509.load_pem_x509_certificate(cert_pem)
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
@@ -193,10 +197,10 @@ class TestCertGeneration:
         assert ipaddress.ip_address("127.0.0.1") in ips
 
     def test_cert_validity_period(self):
-        from major.cert import generate_cert_pem
+
         from cryptography import x509
-        from datetime import timedelta, UTC
-        from datetime import datetime
+
+        from major.cert import generate_cert_pem
         cert_pem, _ = generate_cert_pem(hostname="test.local", days=30)
         cert = x509.load_pem_x509_certificate(cert_pem)
         delta = cert.not_valid_after_utc - cert.not_valid_before_utc
@@ -233,13 +237,13 @@ class TestCertGeneration:
         assert mtime2 > mtime1
 
     def test_build_ssl_context_returns_context(self, tmp_path):
-        from major.cert import ensure_cert, build_ssl_context
+        from major.cert import build_ssl_context, ensure_cert
         cert_path, key_path = ensure_cert(cert_dir=tmp_path, hostname="test.local")
         ctx = build_ssl_context(cert_path, key_path)
         assert isinstance(ctx, ssl.SSLContext)
 
     def test_ssl_context_minimum_tls_version(self, tmp_path):
-        from major.cert import ensure_cert, build_ssl_context
+        from major.cert import build_ssl_context, ensure_cert
         cert_path, key_path = ensure_cert(cert_dir=tmp_path, hostname="test.local")
         ctx = build_ssl_context(cert_path, key_path)
         assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2
@@ -312,8 +316,9 @@ class TestRedirector:
         assert "stopped" in repr(r)
 
     def test_redirector_from_config_disabled(self):
-        from major.redirector import redirector_from_config
         from unittest.mock import MagicMock
+
+        from major.redirector import redirector_from_config
         cfg = MagicMock()
         cfg.get = lambda key, default=None: {
             "major.redirector.enabled": False,
@@ -322,8 +327,9 @@ class TestRedirector:
         assert result is None
 
     def test_redirector_from_config_enabled(self):
-        from major.redirector import redirector_from_config, Redirector
         from unittest.mock import MagicMock
+
+        from major.redirector import Redirector, redirector_from_config
         cfg = MagicMock()
         values = {
             "major.redirector.enabled": True,
@@ -348,7 +354,7 @@ class TestRedirector:
 class TestDNSListenerStub:
 
     def test_not_implemented(self):
-        from major.listeners.dns import DNSTunnelListener, IMPLEMENTED
+        from major.listeners.dns import IMPLEMENTED, DNSTunnelListener
         assert IMPLEMENTED is False
         listener = DNSTunnelListener(domain="c2.example.com")
         with pytest.raises(NotImplementedError):
@@ -381,7 +387,7 @@ class TestDNSListenerStub:
 class TestSMBListenerStub:
 
     def test_not_implemented(self):
-        from major.listeners.smb import SMBPipeListener, IMPLEMENTED
+        from major.listeners.smb import IMPLEMENTED, SMBPipeListener
         assert IMPLEMENTED is False
         listener = SMBPipeListener()
         with pytest.raises(NotImplementedError):
@@ -544,6 +550,7 @@ class TestBeaconExecPost:
 
     def test_exec_post_returns_string(self):
         import base64
+
         from server import _bundle_module
         b = self._make_beacon()
         code_b64 = base64.b64encode(_bundle_module("enum/sysinfo").encode()).decode()
@@ -552,6 +559,7 @@ class TestBeaconExecPost:
 
     def test_exec_post_sysinfo_ok(self):
         import base64
+
         from server import _bundle_module
         b = self._make_beacon()
         code_b64 = base64.b64encode(_bundle_module("enum/sysinfo").encode()).decode()
@@ -561,6 +569,7 @@ class TestBeaconExecPost:
 
     def test_exec_post_cron_list(self):
         import base64
+
         from server import _bundle_module
         b = self._make_beacon()
         code_b64 = base64.b64encode(_bundle_module("persist/cron").encode()).decode()
@@ -571,6 +580,7 @@ class TestBeaconExecPost:
 
     def test_exec_post_wrong_module_name(self):
         import base64
+
         from server import _bundle_module
         b = self._make_beacon()
         # Bundle sysinfo but claim it's something else
@@ -586,6 +596,7 @@ class TestBeaconExecPost:
     def test_exec_post_data_included_in_output(self):
         """Structured data dict should be appended to output."""
         import base64
+
         from server import _bundle_module
         b = self._make_beacon()
         code_b64 = base64.b64encode(_bundle_module("enum/sysinfo").encode()).decode()
@@ -715,6 +726,7 @@ class TestInstallPersistence:
         """The upload task data should be a valid base64 Python beacon."""
         import base64
         import json
+
         from major.db import get_pending_tasks
         from server import ursa_install_persistence
         ursa_install_persistence(
@@ -733,6 +745,7 @@ class TestInstallPersistence:
         """Custom c2_url should appear in the uploaded beacon source."""
         import base64
         import json
+
         from major.db import get_pending_tasks
         from server import ursa_install_persistence
         ursa_install_persistence(
@@ -775,6 +788,7 @@ class TestInstallPersistence:
     def test_custom_payload_path(self, sample_session, tmp_db):
         """Custom payload_path should appear in the upload task."""
         import json
+
         from major.db import get_pending_tasks
         from server import ursa_install_persistence
         ursa_install_persistence(
@@ -791,6 +805,7 @@ class TestInstallPersistence:
     def test_systemd_method_queues_cron_module(self, sample_session, tmp_db):
         """systemd method should use persist/cron with systemd_install action."""
         import json
+
         from major.db import get_pending_tasks
         from server import ursa_install_persistence
         ursa_install_persistence(
@@ -980,6 +995,7 @@ class TestInstallPersistenceGo:
         """Uploaded data should be a valid ELF binary for Linux targets."""
         import base64
         import json
+
         from major.db import create_session, get_pending_tasks
         from server import ursa_install_persistence
         sid = create_session("1.2.3.4", hostname="linbox", username="u",
@@ -1000,6 +1016,7 @@ class TestInstallPersistenceGo:
     def test_go_persist_command_has_no_python3(self, tmp_db):
         """The persist command for Go should be a bare path, no python3."""
         import json
+
         from major.db import create_session, get_pending_tasks
         from server import ursa_install_persistence
         sid = create_session("1.2.3.4", hostname="linbox", username="u",

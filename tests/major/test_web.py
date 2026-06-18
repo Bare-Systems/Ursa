@@ -12,12 +12,10 @@ Covers:
 - User administration routes (admin-only)
 """
 
-import json
 import time
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -229,6 +227,7 @@ class TestRoleHelpers:
 
     def test_current_user_raises_401_without_user(self):
         from fastapi import HTTPException, Request
+
         from major.web.auth import current_user
 
         # Build a minimal mock request with no state.user
@@ -242,6 +241,7 @@ class TestRoleHelpers:
 
     def test_require_role_raises_403_if_insufficient(self):
         from fastapi import HTTPException, Request
+
         from major.web.auth import require_role
 
         scope = {"type": "http", "method": "GET", "path": "/"}
@@ -254,6 +254,7 @@ class TestRoleHelpers:
 
     def test_require_role_returns_user_if_sufficient(self):
         from fastapi import Request
+
         from major.web.auth import require_role
 
         scope = {"type": "http", "method": "GET", "path": "/"}
@@ -265,6 +266,7 @@ class TestRoleHelpers:
 
     def test_actor_for_generates_audit_string(self):
         from fastapi import Request
+
         from major.web.auth import actor_for
 
         scope = {"type": "http", "method": "GET", "path": "/"}
@@ -296,6 +298,7 @@ class TestRoleHelpers:
 
     def test_require_api_role_rejects_invalid_token(self, monkeypatch):
         from fastapi import HTTPException
+
         from major.web.auth import require_api_role
 
         class DummyConfig:
@@ -802,7 +805,7 @@ class TestCampaignRoutes:
         assert resp.status_code in (200, 303)
 
     def test_campaign_delete_note(self, operator_client, sample_session_id, tmp_db):
-        from major.db import update_session_info, add_campaign_note, list_campaign_notes
+        from major.db import add_campaign_note, list_campaign_notes, update_session_info
         update_session_info(sample_session_id, campaign="op-foxtrot")
         add_campaign_note("op-foxtrot", "A note to delete")
         notes = list_campaign_notes("op-foxtrot")
@@ -824,7 +827,11 @@ class TestCampaignRoutes:
         assert resp.status_code in (200, 303)
 
     def test_campaign_update_checklist_item(self, operator_client, sample_session_id, tmp_db):
-        from major.db import update_session_info, add_campaign_checklist_item, list_campaign_checklist
+        from major.db import (
+            add_campaign_checklist_item,
+            list_campaign_checklist,
+            update_session_info,
+        )
         update_session_info(sample_session_id, campaign="op-hotel")
         add_campaign_checklist_item("op-hotel", "Old title")
         items = list_campaign_checklist("op-hotel")
@@ -837,7 +844,11 @@ class TestCampaignRoutes:
         assert resp.status_code in (200, 303)
 
     def test_campaign_delete_checklist_item(self, operator_client, sample_session_id, tmp_db):
-        from major.db import update_session_info, add_campaign_checklist_item, list_campaign_checklist
+        from major.db import (
+            add_campaign_checklist_item,
+            list_campaign_checklist,
+            update_session_info,
+        )
         update_session_info(sample_session_id, campaign="op-india")
         add_campaign_checklist_item("op-india", "Delete me")
         items = list_campaign_checklist("op-india")
@@ -859,7 +870,7 @@ class TestCampaignRoutes:
         assert resp.status_code == 303
 
     def test_campaign_bulk_checklist_update(self, operator_client, sample_session_id, tmp_db):
-        from major.db import update_session_info, add_campaign_checklist_item
+        from major.db import add_campaign_checklist_item, update_session_info
         update_session_info(sample_session_id, campaign="op-kilo")
         add_campaign_checklist_item("op-kilo", "Item 1")
         add_campaign_checklist_item("op-kilo", "Item 2")
@@ -1053,7 +1064,6 @@ class TestUserAdminRoutes:
             follow_redirects=False,
         )
         assert resp.status_code in (200, 303)
-        from major.db import get_user_by_id
         updated = get_user_by_id(user_id)
         assert updated["role"] == "reviewer"
 

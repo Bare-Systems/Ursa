@@ -222,7 +222,7 @@ def ensure_cert(
 def build_ssl_context(
     cert_path: str | Path,
     key_path: str | Path,
-) -> "ssl.SSLContext":  # type: ignore[name-defined]
+) -> ssl.SSLContext:  # type: ignore[name-defined]
     """Return a server-side ssl.SSLContext loaded with the given cert/key.
 
     Uses TLS 1.2+ only; disables SSLv2/SSLv3/TLS 1.0/1.1.

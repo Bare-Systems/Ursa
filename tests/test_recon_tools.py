@@ -7,12 +7,8 @@ use the tmp_db fixture for isolation without needing a live C2 server.
 from __future__ import annotations
 
 import json
-import time
-
-import pytest
 
 from major.db import complete_task, create_session, create_task, set_setting
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -395,8 +391,9 @@ class TestSitrep:
         assert "recon:1/2" in out
 
     def test_timestamp_in_header(self, tmp_db):
-        from server import ursa_sitrep
         import datetime
+
+        from server import ursa_sitrep
         out = ursa_sitrep()
         year = str(datetime.datetime.now().year)
         assert year in out

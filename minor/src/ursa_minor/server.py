@@ -216,13 +216,25 @@ def _tcp_connect_scan(ip, port, timeout=1):
 
 def _auto_save(tool_name: str, result: str, metadata: dict | None = None,
                structured_data: list | dict | None = None) -> str:
-    """Save a scan result and append the result ID to the output."""
+    """Save a scan result and append the result ID to the output.
+
+    Also feeds the result into the normalized asset graph (Phase 6A) as facts.
+    Both side effects are best-effort and never break the tool's own output.
+    """
     try:
         from ursa_minor.results import save_result
         result_id = save_result(tool_name, result, metadata, structured_data)
-        return result + f"\n\n[Saved as {result_id}]"
+        out = result + f"\n\n[Saved as {result_id}]"
     except Exception:
-        return result
+        out = result
+
+    try:
+        from ursa_minor.assetgraph import record_result
+        record_result(tool_name, structured_data, metadata)
+    except Exception:
+        pass
+
+    return out
 
 
 # ── MCP Tools ──
@@ -3054,6 +3066,113 @@ def close_engagement() -> str:
         f"  ID        : {record['id']}",
         f"  Closed at : {record['closed_at']}",
     ])
+
+
+@mcp_server.tool()
+def ursa_asset_graph(fact_type: str = "", limit: int = 30) -> str:
+    """
+    Show the normalized asset graph for the active engagement (Phase 6A).
+
+    Scans run through Ursa Minor automatically populate a graph of typed,
+    de-duplicated facts (host, domain, service, certificate, route, endpoint,
+    parameter, auth_context, technology_fingerprint, finding) instead of leaving
+    insight buried in per-tool text output. This reports the current world model
+    so you can reason over facts, not terminal spam.
+
+    Args:
+        fact_type: Optional — list facts of one type (e.g. "host", "service",
+                   "finding"). Empty shows the summary counts across all types.
+        limit: Max facts to list when a fact_type is given.
+    """
+    from ursa_minor.assetgraph import load_graph, FACT_TYPES
+
+    graph = load_graph()
+    summary = graph.summary()
+
+    if not fact_type:
+        lines = [
+            f"Asset graph for engagement '{summary['engagement_id']}': "
+            f"{summary['total_facts']} facts, {summary['edges']} edges.",
+            "",
+        ]
+        for ftype in FACT_TYPES:
+            count = summary["counts"].get(ftype, 0)
+            if count:
+                lines.append(f"  {ftype:<24} {count}")
+        if summary["total_facts"] == 0:
+            lines.append("  (empty — run a scan to populate it)")
+        return "\n".join(lines)
+
+    fact_type = fact_type.strip().lower()
+    if fact_type not in FACT_TYPES:
+        return f"Unknown fact type '{fact_type}'. Valid types: {', '.join(FACT_TYPES)}"
+
+    facts = graph.facts_of(fact_type)
+    if not facts:
+        return f"No '{fact_type}' facts recorded yet."
+
+    facts.sort(key=lambda f: f.last_seen, reverse=True)
+    lines = [f"{len(facts)} '{fact_type}' fact(s) (showing up to {limit}):", ""]
+    for fact in facts[:limit]:
+        attrs = ", ".join(f"{k}={v}" for k, v in fact.attrs.items() if v not in (None, "", [], {}))
+        src = ",".join(fact.sources)
+        lines.append(f"  {fact.identity}")
+        if attrs:
+            lines.append(f"      {attrs}")
+        lines.append(f"      seen {fact.times_seen}x via [{src}]")
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
+def ursa_run_checks(target: str, templates_dir: str = "", timeout: float = 10.0) -> str:
+    """
+    Run declarative security-check templates against a target (Phase 6C).
+
+    Executes the built-in template library (plus any *.yaml templates in
+    templates_dir) against the target URL. Each template declares HTTP requests
+    with matchers (status/word/regex/header); a match emits a finding with the
+    raw request/response captured as replayable evidence. Findings flow into the
+    normalized asset graph (see ursa_asset_graph) and are saved for export/diff.
+
+    Respects the active engagement scope — refuses out-of-scope targets.
+
+    Args:
+        target: Base URL to test, e.g. "https://example.com".
+        templates_dir: Optional path to a directory of custom *.yaml templates.
+        timeout: Per-request timeout in seconds.
+    """
+    from ursa_minor.engagement import check as _scope_check
+    from ursa_minor.checkengine import builtin_templates, load_templates_from_dir, run_templates
+
+    scope = _scope_check(target)
+    if not scope["in_scope"]:
+        return f"Refusing to run: target is OUT OF SCOPE — {scope['reason']}"
+
+    templates = builtin_templates()
+    if templates_dir:
+        templates.extend(load_templates_from_dir(templates_dir))
+
+    findings = run_templates(templates, target, timeout=timeout)
+
+    lines = [
+        f"Declarative checks against {target}",
+        f"Templates run: {len(templates)} | Findings: {len(findings)}",
+        "",
+    ]
+    if not findings:
+        lines.append("No template matched. (Target may be clean, or behind auth/WAF.)")
+    else:
+        for f in findings:
+            lines.append(f"[{f['severity'].upper()}] {f['title']}  ({f['template_id']})")
+            lines.append(f"    {f['matched_at']}")
+            refs = " ".join(r for r in (f.get("wstg"), f.get("asvs")) if r)
+            if refs:
+                lines.append(f"    {refs}")
+
+    result = "\n".join(lines)
+    return _auto_save("run_checks", result,
+                      {"target": target, "templates": len(templates), "findings": len(findings)},
+                      structured_data=findings)
 
 
 # ── API / OpenAPI Schema Scan ──

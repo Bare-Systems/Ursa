@@ -49,6 +49,14 @@ def _active_id() -> str | None:
     return None
 
 
+def active_engagement_id() -> str | None:
+    """Public accessor for the active engagement id (or None).
+
+    Used by the asset graph to scope collected facts to the current engagement.
+    """
+    return _active_id()
+
+
 def _load(eng_id: str) -> dict | None:
     f = _eng_dir() / f"{eng_id}.json"
     if not f.exists():

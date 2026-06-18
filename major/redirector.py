@@ -64,12 +64,11 @@ Operational notes
 from __future__ import annotations
 
 import threading
-import urllib.request
 import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
-
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 

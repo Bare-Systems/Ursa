@@ -1,12 +1,13 @@
 """Tests for implants/evasion.py — sandbox/VM detection and operational evasion."""
 
-import sys
 import platform
+import sys
 import time
 
 import pytest
 
 from implants.evasion import (
+    _analysis_tools_running,
     _cpu_core_count,
     _cpu_has_vm_string,
     _debugger_attached,
@@ -17,7 +18,6 @@ from implants.evasion import (
     _timing_accelerated,
     _total_ram_mb,
     _uptime_seconds,
-    _analysis_tools_running,
     amsi_bypass,
     is_sandbox,
     obfuscated_sleep,
@@ -349,8 +349,9 @@ class TestAnalysisToolDetection:
 
     def test_detects_fake_analysis_process(self, monkeypatch):
         """Inject a fake process list containing a known analysis tool."""
-        from implants import evasion
         import subprocess as sp
+
+        from implants import evasion
 
         class FakeResult:
             stdout = "python3\nwireshark\nbash\n"
@@ -360,8 +361,9 @@ class TestAnalysisToolDetection:
 
     def test_ignores_unrelated_processes(self, monkeypatch):
         """Normal processes should not trigger detection."""
-        from implants import evasion
         import subprocess as sp
+
+        from implants import evasion
 
         class FakeResult:
             stdout = "python3\nbash\nnginx\nsshd\ncron\n"

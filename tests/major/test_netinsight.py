@@ -2,7 +2,6 @@
 
 from major import netinsight
 
-
 SCAN_A = [
     {"ip": "192.168.86.1", "mac": "AA:BB:CC:00:00:01", "vendor": "Google"},
     {"ip": "192.168.86.53", "mac": "aa:bb:cc:00:00:02", "vendor": "Beelink"},
