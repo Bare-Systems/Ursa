@@ -686,7 +686,8 @@ class TestTaskRoutes:
 
     def test_tasks_list_with_task(self, operator_client, sample_session_id, tmp_db):
         from major.db import create_task
-        task_id = create_task(sample_session_id, "shell", {"command": "id"})
+
+        create_task(sample_session_id, "shell", {"command": "id"})
         resp = operator_client.get("/tasks/")
         assert resp.status_code == 200
 

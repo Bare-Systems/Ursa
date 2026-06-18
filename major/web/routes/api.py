@@ -75,6 +75,7 @@ from major.pihole import (
 from major.web.auth import api_actor_for, require_api_role
 
 router = APIRouter(prefix="/api/v1")
+REQUIRE_API_ROLE = Depends(require_api_role)
 
 CHECKLIST_STATUSES = {"pending", "in_progress", "blocked", "done"}
 CHECKLIST_SORT_OPTIONS = {"created_desc", "created_asc", "updated_desc", "updated_asc", "due_asc", "due_desc"}

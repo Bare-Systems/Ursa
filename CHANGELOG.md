@@ -18,6 +18,7 @@ All notable changes to Ursa are documented here.
 
 ### Fixed
 
+- Resolved Ruff lint failures across Ursa Major and tests, including the API role dependency singleton, TLS context typing, and unused locals.
 - Hardened the homelab provisioner (`deploy/blink/provision_ursa_major.sh`) to seed the control-plane `api_token`. It now sets `major.web.auth.api_token` via `setdefault(os.environ.get("URSA_TOKEN") or secrets.token_urlsafe(32))` — mirroring how `session_secret`/`approval_signing_key` are handled. An existing token is always preserved (deploys never clobber a working token), an injected `URSA_TOKEN` is honored so a fresh deploy can match clients, and otherwise a strong token is generated. Previously the script never set `api_token`, so a clean deploy left it empty and the admin API returned `503 "API token is not configured"`. Verified on the homelab: a redeploy preserved the existing token and the network admin API kept authenticating (`200`).
 - Docker health checks for `ursa-major-c2` and `ursa-major-cp` were failing with `curl: not found` — replaced `curl` with Python `urllib` in both health check commands since the image doesn't include curl.
 

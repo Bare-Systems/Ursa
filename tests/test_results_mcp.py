@@ -248,7 +248,6 @@ class TestUrsaResultsReport:
         _save("scan_ports", "a", {"target": "10.0.0.1"})
         _save("discover_network", "b")
         # Redirect reports dir so we don't pollute ~/.ursa
-        reports_dir = tmp_path / "reports"
         monkeypatch.setattr(
             "server.Path.home", lambda: tmp_path
         )

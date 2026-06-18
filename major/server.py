@@ -124,7 +124,6 @@ def _fire_loot_alerts(session_id: str, module: str, result_str: str) -> None:
         if sev not in _ALERT_SEVERITIES:
             continue
         title  = f.get("title", "unknown finding")
-        cat    = f.get("category", "")
         detail = f.get("detail", "")
         level  = _SEVERITY_LOG_LEVEL.get(sev, "info")
         msg    = f"[{sev}] {module} → {title}"
@@ -694,8 +693,6 @@ def start_server(
         _log(f"  Redirector: :{redirector.config.listen_port} → {scheme}://{host}:{port}")
     _log("")
     _log("  Endpoints:")
-    rev = _profile.reverse_map()
-    dl_prefix = _profile.download_prefix()
     for logical, path in _profile.urls.items():
         _log(f"    {logical:10s} → {path}")
     _log("=" * 58)

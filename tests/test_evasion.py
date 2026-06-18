@@ -139,7 +139,6 @@ class TestIsSandbox:
         from implants import evasion
         # Make uptime look tiny (< 5 minutes) and username look like sandbox
         monkeypatch.setattr(evasion, "_uptime_seconds", lambda: 10.0)
-        original_user = __import__("os").getenv
         monkeypatch.setenv("USER", "sandbox")
         # Also mock process count
         monkeypatch.setattr(evasion, "_process_count", lambda: 5)

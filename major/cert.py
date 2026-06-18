@@ -35,6 +35,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
+import ssl
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -222,7 +223,7 @@ def ensure_cert(
 def build_ssl_context(
     cert_path: str | Path,
     key_path: str | Path,
-) -> ssl.SSLContext:  # type: ignore[name-defined]
+) -> ssl.SSLContext:
     """Return a server-side ssl.SSLContext loaded with the given cert/key.
 
     Uses TLS 1.2+ only; disables SSLv2/SSLv3/TLS 1.0/1.1.
@@ -232,8 +233,6 @@ def build_ssl_context(
         ctx = build_ssl_context(cert_path, key_path)
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
     """
-    import ssl
-
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2

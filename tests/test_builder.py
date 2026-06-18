@@ -675,7 +675,7 @@ class TestGoTemplate:
             post_build="go build -o {binary} {output}",
         )
         src_path = tmp_path / "agent.go"
-        binary_path = Builder().build_to_file(cfg, src_path)
+        Builder().build_to_file(cfg, src_path)
         # Run go build directly (post_build via Builder.compile would work too)
         result = subprocess.run(
             ["go", "build", "-o", str(tmp_path / "agent"), str(src_path)],
