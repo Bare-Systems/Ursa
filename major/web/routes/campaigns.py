@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
@@ -126,9 +127,9 @@ async def campaign_list(request: Request):
         reverse=True,
     )
     return templates.TemplateResponse(
+        request,
         "campaigns.html",
         {
-            "request": request,
             "active_page": "campaigns",
             "campaigns": rows,
         },
@@ -140,9 +141,9 @@ async def campaign_playbooks_page(request: Request):
     _ = require_role(request, "admin")
     playbooks = list_campaign_playbooks(limit=300)
     return templates.TemplateResponse(
+        request,
         "campaign_playbooks.html",
         {
-            "request": request,
             "active_page": "campaigns",
             "playbooks": playbooks,
         },
@@ -238,9 +239,9 @@ async def campaign_detail(request: Request, campaign_name: str):
             by_risk[risk] += 1
 
     return templates.TemplateResponse(
+        request,
         "campaign_detail.html",
         {
-            "request": request,
             "active_page": "campaigns",
             "campaign_name": campaign_name,
             "sessions": sessions,
@@ -331,7 +332,7 @@ async def campaign_update_checklist_item(request: Request, campaign_name: str, i
     text_filter = str(form.get("q_filter", "")).strip()
     sort_filter = str(form.get("sort_filter", "created_desc")).strip().lower()
     status = str(form.get("status", "")).strip().lower()
-    updates = {}
+    updates: dict[str, Any] = {}
     if status in CHECKLIST_STATUSES:
         updates["status"] = status
     title = str(form.get("title", "")).strip()

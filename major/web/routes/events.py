@@ -39,12 +39,11 @@ async def event_list(
     )
 
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("partials/event_list.html", {
-            "request": request, "events": events,
+        return templates.TemplateResponse(request, "partials/event_list.html", {
+            "events": events,
         })
 
-    return templates.TemplateResponse("events.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "events.html", {
         "active_page": "events",
         "events": events,
         "current_level": level,

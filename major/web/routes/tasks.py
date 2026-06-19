@@ -39,12 +39,11 @@ async def task_list(
     )
 
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("partials/task_table.html", {
-            "request": request, "tasks": tasks,
+        return templates.TemplateResponse(request, "partials/task_table.html", {
+            "tasks": tasks,
         })
 
-    return templates.TemplateResponse("tasks.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "tasks.html", {
         "active_page": "tasks",
         "tasks": tasks,
         "current_session": session_id,
@@ -61,6 +60,6 @@ async def task_detail(request: Request, task_id: str):
     if not task:
         raise HTTPException(404, "Task not found")
 
-    return templates.TemplateResponse("partials/shell_output.html", {
-        "request": request, "task": task,
+    return templates.TemplateResponse(request, "partials/shell_output.html", {
+        "task": task,
     })

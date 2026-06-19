@@ -192,15 +192,15 @@ def export_csv(result_id: str) -> str:
         return output.getvalue()
 
     # Fallback: dump text lines
-    writer = csv.writer(output)
-    writer.writerow(["tool", "timestamp", "result_id"])
-    writer.writerow([record.get("tool", ""), record.get("timestamp_str", ""), result_id])
-    writer.writerow([])
+    plain_writer = csv.writer(output)
+    plain_writer.writerow(["tool", "timestamp", "result_id"])
+    plain_writer.writerow([record.get("tool", ""), record.get("timestamp_str", ""), result_id])
+    plain_writer.writerow([])
 
     result_text = record.get("result", "")
     lines = result_text.strip().split("\n")
     for line in lines:
-        writer.writerow([line])
+        plain_writer.writerow([line])
 
     return output.getvalue()
 
@@ -348,6 +348,9 @@ def diff_results(baseline_id: str, current_id: str) -> dict:
         errors.append(f"Current result '{current_id}' not found")
     if errors:
         return {"error": "; ".join(errors), "baseline_id": baseline_id, "current_id": current_id}
+
+    assert baseline_rec is not None
+    assert current_rec is not None
 
     def _to_set(rec: dict) -> set[str]:
         sd = rec.get("structured_data")

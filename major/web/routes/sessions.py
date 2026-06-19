@@ -30,12 +30,11 @@ async def session_list(
     sessions = list_sessions(status=status, campaign=campaign, tag=tag)
 
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("partials/session_table.html", {
-            "request": request, "sessions": sessions,
+        return templates.TemplateResponse(request, "partials/session_table.html", {
+            "sessions": sessions,
         })
 
-    return templates.TemplateResponse("sessions.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "sessions.html", {
         "active_page": "sessions",
         "sessions": sessions,
         "current_status": status,
@@ -50,8 +49,7 @@ async def session_detail(request: Request, session_id: str):
     if not session:
         raise HTTPException(404, "Session not found")
 
-    return templates.TemplateResponse("session_detail.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "session_detail.html", {
         "active_page": "sessions",
         "session": session,
         "tasks": list_tasks(session_id=session_id, limit=50),
@@ -80,8 +78,8 @@ async def create_session_task(request: Request, session_id: str):
     task_id = decision["task_id"]
     task = get_task(task_id)
 
-    return templates.TemplateResponse("partials/task_row.html", {
-        "request": request, "task": task,
+    return templates.TemplateResponse(request, "partials/task_row.html", {
+        "task": task,
     })
 
 

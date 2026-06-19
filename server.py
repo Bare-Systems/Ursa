@@ -2703,7 +2703,7 @@ def ursa_session_recon(session_id: str) -> str:
         else:
             findings_block = "\nFindings: loot modules completed with no findings."
     else:
-        counts = {}
+        counts: dict[str, int] = {}
         for f in findings:
             counts[f.get("severity", "?")] = counts.get(f.get("severity", "?"), 0) + 1
         summary = "  ".join(f"{sev}:{n}" for sev, n in

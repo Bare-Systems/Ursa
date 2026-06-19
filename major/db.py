@@ -12,6 +12,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 from major.config import get_config
 
@@ -1307,7 +1308,7 @@ def upsert_campaign_playbook(name, items, description=""):
                 "title": title,
                 "details": str(item.get("details", "")).strip(),
                 "owner": str(item.get("owner", "")).strip(),
-                "due_offset_days": due_offset,
+                "due_offset_days": due_offset,  # type: ignore[dict-item]
             }
         )
     if not normalized:
@@ -1608,7 +1609,7 @@ def set_user_password(user_id, password):
 
 def update_user_role_status(user_id, role=None, is_active=None):
     """Update user role and/or active status."""
-    updates = {}
+    updates: dict[str, Any] = {}
     if role is not None:
         chosen_role = str(role).strip().lower()
         if chosen_role not in VALID_ROLES:

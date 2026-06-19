@@ -94,16 +94,16 @@ def _tls_info(host: str, port: int, timeout: float) -> dict:
             "note": untrusted_note,
         }
 
-    subject = dict(x[0] for x in cert.get("subject", []))
-    issuer = dict(x[0] for x in cert.get("issuer", []))
+    subject = dict(x[0] for x in cert.get("subject", []))  # type: ignore[misc]
+    issuer = dict(x[0] for x in cert.get("issuer", []))  # type: ignore[misc]
     not_after_str = cert.get("notAfter", "")
-    san = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]
+    san = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]  # type: ignore[misc]
 
     expiry_dt = None
     days_remaining = None
     if not_after_str:
         try:
-            expiry_dt = datetime.strptime(not_after_str, "%b %d %H:%M:%S %Y %Z")
+            expiry_dt = datetime.strptime(not_after_str, "%b %d %H:%M:%S %Y %Z")  # type: ignore[arg-type]
             expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
             now = datetime.now(tz=timezone.utc)
             days_remaining = (expiry_dt - now).days
@@ -150,8 +150,8 @@ def _build_no_redirect_opener(
     if ssl_ctx is not None:
         handlers.append(urllib.request.HTTPSHandler(context=ssl_ctx))
     opener = urllib.request.build_opener(*handlers)
-    opener.handlers = [
-        h for h in opener.handlers
+    opener.handlers = [  # type: ignore[attr-defined]
+        h for h in opener.handlers  # type: ignore[attr-defined]
         if not isinstance(h, urllib.request.HTTPRedirectHandler)
     ]
     return opener
@@ -236,7 +236,7 @@ def _fetch_with_redirects(
         return status, headers, body, chain, elapsed, tls_unverified
 
     # Exhausted max_redirects — return last state
-    return status, headers, body, chain, elapsed, tls_unverified  # type: ignore[possibly-undefined]
+    return status, headers, body, chain, elapsed, tls_unverified
 
 
 # ── favicon ───────────────────────────────────────────────────────────────────

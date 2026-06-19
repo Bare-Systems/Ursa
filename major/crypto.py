@@ -146,7 +146,7 @@ def generate_session_key() -> str:
     return os.urandom(32).hex()
 
 
-def derive_key(password: str, salt: bytes = None) -> tuple[bytes, bytes]:
+def derive_key(password: str, salt: bytes | None = None) -> tuple[bytes, bytes]:
     """Derive an encryption key from a password using PBKDF2.
 
     Returns (key, salt) tuple.

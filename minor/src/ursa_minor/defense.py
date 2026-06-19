@@ -11,6 +11,7 @@ import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 
 DEFAULT_BASELINE_DIR = Path.home() / ".ursa" / "baselines"
@@ -313,7 +314,7 @@ def collect_listening_ports(system: str | None = None) -> list[dict]:
     """Collect current listening TCP ports using platform-native tools."""
     normalized_system = _normalize_system(system)
 
-    commands: list[tuple[list[str], callable[[str], list[dict]]]] = []
+    commands: list[tuple[list[str], Callable[[str], list[dict]]]] = []
     if normalized_system == "linux":
         commands = [
             (["ss", "-lntp"], parse_ss_output),

@@ -153,7 +153,7 @@ def load_templates_from_yaml(text: str) -> list[Template]:
 def load_templates_from_dir(path) -> list[Template]:
     """Load every *.yaml / *.yml template under a directory."""
     from pathlib import Path
-    templates = []
+    templates: list[Template] = []
     base = Path(path)
     if not base.is_dir():
         return templates

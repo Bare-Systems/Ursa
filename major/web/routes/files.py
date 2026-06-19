@@ -14,12 +14,11 @@ async def file_list(request: Request, session_id: str | None = None):
     files = list_files(session_id=session_id)
 
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("partials/file_table.html", {
-            "request": request, "files": files,
+        return templates.TemplateResponse(request, "partials/file_table.html", {
+            "files": files,
         })
 
-    return templates.TemplateResponse("files.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "files.html", {
         "active_page": "files",
         "files": files,
     })

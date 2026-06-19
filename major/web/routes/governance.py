@@ -65,9 +65,9 @@ async def governance_home(
     )
 
     return templates.TemplateResponse(
+        request,
         "governance.html",
         {
-            "request": request,
             "active_page": "governance",
             "approvals": approvals,
             "current_status": status,
@@ -310,9 +310,9 @@ async def preview_remediation(
         limit=5000,
     )
     return templates.TemplateResponse(
+        request,
         "partials/remediation_preview.html",
         {
-            "request": request,
             "campaign": name,
             "strategy": strategy_key,
             "count": len(rows),

@@ -89,7 +89,7 @@ async def _apply_base_path(response: Response) -> Response:
         return response
 
     body = b""
-    async for chunk in response.body_iterator:
+    async for chunk in response.body_iterator:  # type: ignore[attr-defined]
         body += chunk
     body = _rewrite_html_paths(body)
 

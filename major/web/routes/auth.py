@@ -34,9 +34,9 @@ async def login_page(request: Request, next: str = "/"):
     if user:
         return RedirectResponse(url=_safe_next_url(next), status_code=303)
     return templates.TemplateResponse(
+        request,
         "login.html",
         {
-            "request": request,
             "next_url": _safe_next_url(next),
             "error": "",
         },
@@ -52,9 +52,9 @@ async def login_submit(request: Request):
     user = authenticate_user(username, password)
     if not user:
         return templates.TemplateResponse(
+            request,
             "login.html",
             {
-                "request": request,
                 "next_url": next_url,
                 "error": "Invalid username or password.",
             },
@@ -78,9 +78,9 @@ async def users_page(request: Request):
     _ = require_role(request, "admin")
     users = list_users(limit=500)
     return templates.TemplateResponse(
+        request,
         "users.html",
         {
-            "request": request,
             "active_page": "users",
             "users": users,
         },

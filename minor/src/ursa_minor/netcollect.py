@@ -61,7 +61,7 @@ def scan_devices(target_range: str, timeout: int = 3) -> list[dict]:
 
     Isolated here so the rest of the module imports without scapy/root.
     """
-    from scapy.all import ARP, Ether, srp, conf  # lazy: pulls scapy
+    from scapy.all import ARP, Ether, srp, conf  # type: ignore[attr-defined]  # lazy: pulls scapy
     from ursa_minor.server import _lookup_vendor
 
     conf.verb = 0

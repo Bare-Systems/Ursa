@@ -47,11 +47,12 @@ import struct
 import fcntl
 from contextlib import redirect_stdout
 from datetime import datetime
+from typing import Any
 
 try:
     from mcp.server.fastmcp import FastMCP
 except ImportError:  # pragma: no cover - test fallback when MCP is absent
-    class FastMCP:  # type: ignore[override]
+    class FastMCP:  # type: ignore[no-redef]
         def __init__(self, *_args, **_kwargs):
             pass
 
@@ -65,7 +66,7 @@ except ImportError:  # pragma: no cover - test fallback when MCP is absent
             raise RuntimeError("MCP runtime is not installed.")
 
 try:
-    from scapy.all import ARP, Ether, srp, IP, TCP, UDP, DNS, DNSQR, DNSRR, ICMP, Raw, conf
+    from scapy.all import ARP, Ether, srp, IP, TCP, UDP, DNS, DNSQR, DNSRR, ICMP, Raw, conf  # type: ignore[attr-defined]
     from scapy.all import sniff as scapy_sniff, sr1
 
     conf.verb = 0
@@ -81,9 +82,9 @@ except ImportError:  # pragma: no cover - test fallback when Scapy is absent
         def __init__(self, *_args, **_kwargs):
             _missing_scapy()
 
-    ARP = Ether = IP = TCP = UDP = DNS = DNSQR = DNSRR = ICMP = Raw = _ScapyLayer
+    ARP = Ether = IP = TCP = UDP = DNS = DNSQR = DNSRR = ICMP = Raw = _ScapyLayer  # type: ignore[assignment,misc]
     srp = scapy_sniff = sr1 = _missing_scapy
-    conf = _DummyConf()
+    conf = _DummyConf()  # type: ignore[assignment]
 
 mcp_server = FastMCP(
     "ursa-minor",
@@ -328,7 +329,7 @@ def scan_ports(
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     if ports:
-        port_list = []
+        port_list: list[int] = []
         for part in ports.split(","):
             part = part.strip()
             if "-" in part:
@@ -422,7 +423,7 @@ def sniff_packets(
     if dns_only and not filter_expr:
         filter_expr = "udp port 53"
 
-    results = {
+    results: dict[str, Any] = {
         "packets": [],
         "dns_queries": [],
         "connections": set(),
@@ -671,11 +672,11 @@ def get_my_network_info() -> str:
 
     try:
         import subprocess
-        result = subprocess.run(
+        proc = subprocess.run(
             ["route", "-n", "get", "default"],
             capture_output=True, text=True, timeout=5,
         )
-        for line in result.stdout.splitlines():
+        for line in proc.stdout.splitlines():
             if "gateway" in line.lower():
                 lines.append(f"Gateway:   {line.split(':')[-1].strip()}")
                 break
@@ -807,7 +808,7 @@ def enumerate_subdomains(
         for sub, ips in sorted(all_subdomains.items()):
             lines.append(f"{sub:<45} {', '.join(ips)}")
 
-        ip_to_subs = {}
+        ip_to_subs: dict[str, list[str]] = {}
         for sub, ips in all_subdomains.items():
             for ip in ips:
                 ip_to_subs.setdefault(ip, []).append(sub)
@@ -1683,10 +1684,11 @@ def vuln_scan(
                 test_url = _inject(url, param, payload)
                 _, _, body = _fetch(test_url)
                 for pat in sqli_errors:
-                    if re.search(pat, body, re.IGNORECASE):
+                    m = re.search(pat, body, re.IGNORECASE)
+                    if m:
                         all_findings.append(
                             f"[CRITICAL] SQL Injection in '{param}' "
-                            f"— payload: {payload} — evidence: {re.search(pat, body, re.IGNORECASE).group()} "
+                            f"— payload: {payload} — evidence: {m.group()} "
                             f"[WSTG-INPV-05][ASVS-5.3.4]")
                         break
 
@@ -1771,7 +1773,7 @@ def os_fingerprint(
         64240: "Linux 4.x/5.x", 29200: "Linux 3.x", 32768: "Cisco IOS",
     }
 
-    candidates = {}
+    candidates: dict[str, Any] = {}
 
     def vote(os_name, confidence, source):
         if os_name and os_name != "Unknown":
@@ -1811,10 +1813,10 @@ def os_fingerprint(
             syn = IP(dst=target) / TCP(dport=probe_port, flags="S",
                 options=[("MSS", 1460), ("SAckOK", b""), ("Timestamp", (12345, 0)),
                          ("NOP", None), ("WScale", 7)])
-            resp = sr1(syn, timeout=timeout)
-            if resp and resp.haslayer(TCP):
-                ttl = resp[IP].ttl
-                win = resp[TCP].window
+            syn_resp = sr1(syn, timeout=timeout)
+            if syn_resp and syn_resp.haslayer(TCP):
+                ttl = syn_resp[IP].ttl
+                win = syn_resp[TCP].window
                 for (lo, hi), name in TTL_SIGS.items():
                     if lo <= ttl <= hi:
                         vote(name, 60, f"TTL={ttl}")
@@ -1824,8 +1826,8 @@ def os_fingerprint(
                 elif any(abs(win - k) < 1000 for k in WINDOW_SIGS):
                     closest = min(WINDOW_SIGS, key=lambda k: abs(k - win))
                     vote(WINDOW_SIGS[closest], 55, f"Window={win} (~{closest})")
-                sr1(IP(dst=target) / TCP(dport=probe_port, sport=resp[TCP].dport,
-                    flags="R", seq=resp[TCP].ack), timeout=1)
+                sr1(IP(dst=target) / TCP(dport=probe_port, sport=syn_resp[TCP].dport,
+                    flags="R", seq=syn_resp[TCP].ack), timeout=1)
                 break
 
         ping = IP(dst=target) / ICMP(type=8) / Raw(load=b"A" * 32)
@@ -1943,11 +1945,11 @@ def smb_enum(
         lines.append(f"Negotiate failed: {e}")
 
     try:
-        result = subprocess.run(
+        smb_proc = subprocess.run(
             ["smbclient", "-L", f"//{target}", "-N"],
             capture_output=True, text=True, timeout=int(timeout) + 5,
         )
-        output = result.stdout + result.stderr
+        output = smb_proc.stdout + smb_proc.stderr
 
         if "Anonymous login successful" in output:
             lines.append("\n[HIGH] Anonymous/null session login allowed")
@@ -1985,13 +1987,13 @@ def smb_enum(
     except Exception:
         pass
 
-    result = "\n".join(lines)
-    smb_data = {"port": smb_port}
+    smb_result = "\n".join(lines)
+    smb_data: dict[str, Any] = {"port": smb_port}
     try:
         smb_data["shares"] = shares
     except NameError:
         smb_data["shares"] = []
-    return _auto_save("smb_enum", result, {"target": target, "port": smb_port},
+    return _auto_save("smb_enum", smb_result, {"target": target, "port": smb_port},
                       structured_data=smb_data)
 
 
@@ -2492,7 +2494,7 @@ def diff_scan_results(
 import ipaddress
 import threading
 
-_arp_spoof_state = {
+_arp_spoof_state: dict[str, Any] = {
     "active": False,
     "stop_event": None,
     "thread": None,
@@ -2577,7 +2579,7 @@ def arp_spoof(
         return f"Refused: gateway {gateway_ip} is not a private (RFC 1918) IP address."
 
     # Resolve MACs
-    from scapy.all import getmacbyip, get_if_hwaddr, sendp
+    from scapy.all import getmacbyip, get_if_hwaddr, sendp  # type: ignore[attr-defined]
 
     target_mac = getmacbyip(target_ip)
     if not target_mac:
@@ -2849,10 +2851,10 @@ def tls_scan(
     days_remaining: int | None = None
 
     if cert:
-        subject_dict = dict(x[0] for x in cert.get("subject", []))
-        issuer_dict = dict(x[0] for x in cert.get("issuer", []))
-        san = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]
-        not_after_str = cert.get("notAfter", "")
+        subject_dict = dict(x[0] for x in cert.get("subject", []))  # type: ignore[misc]
+        issuer_dict = dict(x[0] for x in cert.get("issuer", []))  # type: ignore[misc]
+        san = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]  # type: ignore[misc]
+        not_after_str = str(cert.get("notAfter", ""))
 
         if not_after_str:
             try:

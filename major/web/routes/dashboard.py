@@ -94,8 +94,7 @@ async def dashboard(request: Request):
         reverse=True,
     )[:6]
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "active_page": "dashboard",
         "active_count": len(active),
         "stale_count": len(stale),

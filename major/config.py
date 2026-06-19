@@ -219,10 +219,10 @@ def load_config(path: str | Path | None = None, profile: str | None = None) -> U
     # Apply profile if specified
     if profile and profile in config.get("profiles", {}):
         profile_data = config["profiles"][profile]
-        config = _deep_merge(config, profile_data)
+        config = _deep_merge(config, profile_data)  # type: ignore[arg-type]
 
     # Resolve relative db_path to absolute
-    db_path = Path(config["major"]["db_path"])
+    db_path = Path(str(config["major"]["db_path"]))
     if not db_path.is_absolute():
         config["major"]["db_path"] = str(PROJECT_ROOT / db_path)
 
