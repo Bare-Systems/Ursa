@@ -131,7 +131,11 @@ def _check_writable_cron() -> dict:
         if os.path.exists(p) and os.access(p, os.W_OK):
             writable.append(p)
         elif os.path.isdir(p):
-            for entry in os.scandir(p):
+            try:
+                entries = list(os.scandir(p))
+            except PermissionError:
+                continue
+            for entry in entries:
                 if os.access(entry.path, os.W_OK):
                     writable.append(entry.path)
     return {"writable_cron_paths": writable}

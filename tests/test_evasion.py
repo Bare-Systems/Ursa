@@ -1,5 +1,6 @@
 """Tests for implants/evasion.py — sandbox/VM detection and operational evasion."""
 
+import os
 import platform
 import sys
 import time
@@ -107,6 +108,10 @@ class TestSandboxChecks:
         for key, val in result.items():
             assert isinstance(val, bool), f"check '{key}' returned non-bool: {val!r}"
 
+    @pytest.mark.skipif(
+        os.environ.get("CI") == "true",
+        reason="CI runners are VMs and legitimately trigger vm_cpu_string + vm_dmi_string + low_uptime",
+    )
     def test_not_sandbox_on_dev_machine(self):
         """On a normal developer machine the machine should not be flagged."""
         result = sandbox_checks()
@@ -121,6 +126,10 @@ class TestIsSandbox:
         result = is_sandbox()
         assert isinstance(result, bool)
 
+    @pytest.mark.skipif(
+        os.environ.get("CI") == "true",
+        reason="CI runners are VMs; min_hits=2 legitimately fires on GitHub Actions",
+    )
     def test_false_on_dev_machine(self):
         """Should not flag a real dev/CI machine at the default threshold."""
         assert is_sandbox(min_hits=2) is False
@@ -162,6 +171,10 @@ class TestInlineBeaconCheck:
         result = _is_sandbox()
         assert isinstance(result, bool)
 
+    @pytest.mark.skipif(
+        os.environ.get("CI") == "true",
+        reason="CI runners are VMs; min_hits=2 legitimately fires on GitHub Actions",
+    )
     def test_beacon_is_sandbox_false_on_dev_machine(self):
         from implants.beacon import _is_sandbox
         assert _is_sandbox(min_hits=2) is False

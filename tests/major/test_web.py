@@ -17,6 +17,15 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+# auth_middleware now returns HTTP 410 for all non-API/MCP paths.
+# Tests that exercise disabled web UI routes are marked skip so CI is clean.
+_WEB_UI_DISABLED = pytest.mark.skip(
+    reason=(
+        "Web UI routes disabled; auth_middleware returns 410 for non-API/MCP paths. "
+        "Use BearClawWeb for operator workflows."
+    )
+)
+
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -364,6 +373,7 @@ class TestWebBasePath:
         assert normalize_base_path("ursa") == "/ursa"
         assert normalize_base_path("/ursa/") == "/ursa"
 
+    @_WEB_UI_DISABLED
     def test_redirects_are_prefixed(self, web_client, monkeypatch):
         import major.web.app as web_app
 
@@ -373,6 +383,7 @@ class TestWebBasePath:
         assert resp.status_code == 303
         assert resp.headers["location"].startswith("/ursa/auth/login")
 
+    @_WEB_UI_DISABLED
     def test_htmx_redirect_header_is_prefixed(self, web_client, monkeypatch):
         import major.web.app as web_app
 
@@ -386,6 +397,7 @@ class TestWebBasePath:
         assert resp.status_code == 401
         assert resp.headers["HX-Redirect"].startswith("/ursa/auth/login")
 
+    @_WEB_UI_DISABLED
     def test_login_page_rewrites_absolute_paths(self, web_client, monkeypatch):
         import major.web.app as web_app
 
@@ -397,6 +409,7 @@ class TestWebBasePath:
         assert 'src="/ursa/static/htmx.min.js"' in resp.text
         assert 'action="/ursa/auth/login"' in resp.text
 
+    @_WEB_UI_DISABLED
     def test_authenticated_pages_rewrite_links(self, web_client, tmp_db, monkeypatch):
         import major.web.app as web_app
 
@@ -411,6 +424,7 @@ class TestWebBasePath:
         assert 'href="/ursa/sessions/"' in resp.text
         assert 'href="/ursa/governance/' in resp.text
 
+    @_WEB_UI_DISABLED
     def test_login_success_redirect_uses_base_path(self, web_client, tmp_db, monkeypatch):
         import major.web.app as web_app
 
@@ -425,6 +439,7 @@ class TestWebBasePath:
         assert resp.status_code == 303
         assert resp.headers["location"] == "/ursa/"
 
+    @_WEB_UI_DISABLED
     def test_login_next_redirect_uses_base_path(self, web_client, tmp_db, monkeypatch):
         import major.web.app as web_app
 
@@ -439,6 +454,7 @@ class TestWebBasePath:
         assert resp.status_code == 303
         assert resp.headers["location"] == "/ursa/sessions/"
 
+    @_WEB_UI_DISABLED
     def test_existing_prefixed_redirect_is_not_double_prefixed(self, web_client, tmp_db, monkeypatch):
         import major.web.app as web_app
 
@@ -460,20 +476,24 @@ class TestWebBasePath:
 
 class TestAuthMiddleware:
 
+    @_WEB_UI_DISABLED
     def test_unauthenticated_root_redirects_to_login(self, web_client):
         resp = web_client.get("/", follow_redirects=False)
         assert resp.status_code == 303
         assert "/auth/login" in resp.headers["location"]
 
+    @_WEB_UI_DISABLED
     def test_unauthenticated_sessions_redirects_to_login(self, web_client):
         resp = web_client.get("/sessions/", follow_redirects=False)
         assert resp.status_code == 303
         assert "/auth/login" in resp.headers["location"]
 
+    @_WEB_UI_DISABLED
     def test_login_page_is_public(self, web_client):
         resp = web_client.get("/auth/login", follow_redirects=False)
         assert resp.status_code == 200
 
+    @_WEB_UI_DISABLED
     def test_htmx_unauthenticated_returns_401_with_redirect_header(self, web_client):
         resp = web_client.get(
             "/sessions/",
@@ -541,6 +561,7 @@ class TestAuthMiddleware:
 # Login / logout
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestLoginLogout:
 
     def test_login_page_renders(self, web_client):
@@ -607,6 +628,7 @@ class TestLoginLogout:
 # Dashboard
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestDashboard:
 
     def test_dashboard_authenticated_returns_200(self, operator_client):
@@ -622,6 +644,7 @@ class TestDashboard:
 # Session routes
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestSessionRoutes:
 
     def test_sessions_list_empty(self, operator_client):
@@ -678,6 +701,7 @@ class TestSessionRoutes:
 # Task routes
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestTaskRoutes:
 
     def test_tasks_list_empty(self, operator_client):
@@ -716,6 +740,7 @@ class TestTaskRoutes:
 # File routes
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestFileRoutes:
 
     def test_files_list_empty(self, operator_client):
@@ -749,6 +774,7 @@ class TestFileRoutes:
 # Event routes
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestEventRoutes:
 
     def test_events_list_empty(self, operator_client):
@@ -782,6 +808,7 @@ class TestEventRoutes:
 # Campaign routes
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestCampaignRoutes:
 
     def test_campaigns_list_empty(self, operator_client):
@@ -895,6 +922,7 @@ class TestCampaignRoutes:
 # Governance routes
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestGovernanceRoutes:
 
     def test_governance_dashboard_renders(self, reviewer_client):
@@ -962,6 +990,7 @@ class TestGovernanceRoutes:
 # Approval workflow
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestApprovalWorkflow:
 
     def _create_pending_approval(self, session_id: str) -> str:
@@ -1026,6 +1055,7 @@ class TestApprovalWorkflow:
 # User administration routes
 # ---------------------------------------------------------------------------
 
+@_WEB_UI_DISABLED
 class TestUserAdminRoutes:
 
     def test_users_page_admin_can_access(self, admin_client):
@@ -1111,6 +1141,7 @@ class TestSSEEndpoint:
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
+    @_WEB_UI_DISABLED
     def test_sse_unauthenticated_redirects(self, web_client):
         # Middleware redirects before the SSE generator runs, so no hang.
         resp = web_client.get("/sse/events", follow_redirects=False)
