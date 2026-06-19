@@ -97,7 +97,7 @@ def _tls_info(host: str, port: int, timeout: float) -> dict:
     subject = dict(x[0] for x in cert.get("subject", []))  # type: ignore[misc]
     issuer = dict(x[0] for x in cert.get("issuer", []))  # type: ignore[misc]
     not_after_str = cert.get("notAfter", "")
-    san = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]  # type: ignore[misc]
+    san = [pair[1] for pair in cert.get("subjectAltName", []) if pair[0] == "DNS"]
 
     expiry_dt = None
     days_remaining = None

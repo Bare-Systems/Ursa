@@ -2853,7 +2853,7 @@ def tls_scan(
     if cert:
         subject_dict = dict(x[0] for x in cert.get("subject", []))  # type: ignore[misc]
         issuer_dict = dict(x[0] for x in cert.get("issuer", []))  # type: ignore[misc]
-        san = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]  # type: ignore[misc]
+        san = [str(pair[1]) for pair in cert.get("subjectAltName", []) if pair[0] == "DNS"]
         not_after_str = str(cert.get("notAfter", ""))
 
         if not_after_str:

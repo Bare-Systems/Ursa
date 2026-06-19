@@ -565,7 +565,8 @@ class UrsaC2Handler(BaseHTTPRequestHandler):
         the served stager already knows where to phone home.  Falls back to
         the raw stager.py (token un-substituted) if the builder fails.
         """
-        host, port = self.server.server_address  # type: ignore[misc]
+        _addr: tuple = self.server.server_address  # type: ignore[assignment]
+        host, port = _addr[0], _addr[1]
         cfg = get_config()
         public_url = cfg.get("major.public_url", "")
         if not public_url:
