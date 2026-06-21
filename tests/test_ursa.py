@@ -18,7 +18,6 @@ import urllib.request
 
 from tests.conftest import TEST_API_TOKEN
 
-
 # ── TC-URSA-001 / TC-URSA-002 / TC-URSA-003 — Control Plane ─────────────────
 
 

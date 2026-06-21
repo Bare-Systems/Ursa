@@ -91,7 +91,6 @@ def cp_test_client(tmp_db, monkeypatch):
     for unauthenticated requests. Mirrors the homelab CP base_url.
     """
     import major.config as _cfg_mod
-    import major.web.auth as _auth_mod
 
     cfg = _cfg_mod.get_config()
     original_get = cfg.get
@@ -104,6 +103,7 @@ def cp_test_client(tmp_db, monkeypatch):
     monkeypatch.setattr(cfg, "get", _patched_get)
 
     from fastapi.testclient import TestClient
+
     from major.web.app import app
 
     with TestClient(app, raise_server_exceptions=True, base_url=f"http://127.0.0.1:{URSA_CP_PORT}") as client:
