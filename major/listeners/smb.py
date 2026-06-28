@@ -187,8 +187,8 @@ Security considerations
 - Use a DACL to restrict pipe access to specific users (not everyone)
 - Named pipes can be enumerated by any local user (PipeList / Sysinternals)
 - Use a non-obvious pipe name but avoid obviously-fake names
-- Pipe traffic is NOT encrypted by default; implement application-layer
-  encryption (same AES scheme used in the HTTP C2) over the pipe
+- Pipe traffic is NOT encrypted by default; implement the same AES-GCM
+  envelope used by the HTTP C2 before treating the pipe as production-ready
 - Windows Defender / EDR products hook NtCreateNamedPipeFile and will alert
   on suspicious pipe names; test against your EDR before deploying
 

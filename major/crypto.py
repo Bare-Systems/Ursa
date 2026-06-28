@@ -2,131 +2,90 @@
 """
 Ursa Major — Crypto Layer
 ==========================
-AES-256-CBC encryption for C2 communications.
+AES-256-GCM encryption for C2 communications.
 Each session gets a unique key negotiated at registration.
 """
 
 import base64
 import hashlib
-import hmac
 import json
 import os
+import string
+
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+CRYPTO_SUITE = "AES-256-GCM"
+CRYPTO_FRAME_VERSION = 2
+FRAME_MAGIC = b"URS2"
+NONCE_SIZE = 12
+TAG_SIZE = 16
+AAD = b"ursa-major-c2:v2:aes-256-gcm"
 
 
 class UrsaCrypto:
-    """AES-256-CBC encryption with HMAC-SHA256 authentication.
+    """Versioned AES-256-GCM encryption for C2 payload envelopes.
 
     Message format:
-        [4 bytes: payload length][16 bytes: IV][N bytes: ciphertext][32 bytes: HMAC]
+        [4 bytes: magic/version][12 bytes: nonce][N bytes: ciphertext + 16-byte tag]
 
-    Uses a pure-Python AES implementation to avoid requiring pycryptodome.
-    For production, swap in AES from cryptography or pycryptodome.
+    Legacy SHA-derived CTR/HMAC frames are intentionally rejected so pre-AEAD
+    encrypted sessions fail closed and must re-register with an updated implant.
     """
 
     def __init__(self, key: bytes | str):
+        self.key = self._normalize_key(key)
+        self._aead = AESGCM(self.key)
+
+    @staticmethod
+    def _normalize_key(key: bytes | str) -> bytes:
+        """Return a 32-byte AES key from a session key or shared secret."""
         if isinstance(key, str):
-            key = key.encode()
-        # Derive a 32-byte key and a 32-byte HMAC key from the shared secret
-        self.enc_key = hashlib.sha256(key + b":enc").digest()
-        self.mac_key = hashlib.sha256(key + b":mac").digest()
+            candidate = key.strip()
+            if (
+                len(candidate) == 64
+                and all(ch in string.hexdigits for ch in candidate)
+            ):
+                return bytes.fromhex(candidate)
+            key = candidate.encode()
 
-    def _pad(self, data: bytes) -> bytes:
-        """PKCS7 padding."""
-        pad_len = 16 - (len(data) % 16)
-        return data + bytes([pad_len] * pad_len)
+        if len(key) == 32:
+            return key
+        return hashlib.sha256(key + b":aead").digest()
 
-    def _unpad(self, data: bytes) -> bytes:
-        """Remove PKCS7 padding."""
-        pad_len = data[-1]
-        if pad_len > 16 or pad_len == 0:
-            raise ValueError("Invalid padding")
-        if data[-pad_len:] != bytes([pad_len] * pad_len):
-            raise ValueError("Invalid padding")
-        return data[:-pad_len]
-
-    def _xor_bytes(self, a: bytes, b: bytes) -> bytes:
-        return bytes(x ^ y for x, y in zip(a, b, strict=False))
-
-    def _aes_encrypt_block(self, block: bytes) -> bytes:
-        """AES-256 single block encryption (pure Python).
-
-        This is a simplified but correct AES implementation.
-        For performance-critical use, replace with cryptography lib.
-        """
-        # Use hashlib as a block cipher substitute for the prototype
-        # This gives us a deterministic 16-byte output from key + block
-        # NOT cryptographically equivalent to AES, but functionally correct
-        # for our C2 prototype. Replace with real AES for production.
-        h = hashlib.sha256(self.enc_key + block).digest()[:16]
-        return h
-
-    def _aes_decrypt_block(self, block: bytes) -> bytes:
-        """For our prototype, we use a stream cipher approach instead."""
-        # Since our "block cipher" isn't invertible, we use CTR-like mode
-        raise NotImplementedError("Use encrypt/decrypt methods directly")
-
-    def encrypt(self, plaintext: bytes | str) -> bytes:
-        """Encrypt data with AES-256 in CTR mode + HMAC-SHA256.
-
-        Uses CTR mode for simplicity (no padding needed, invertible).
-        Format: [IV (16 bytes)][ciphertext][HMAC-SHA256 (32 bytes)]
-        """
+    def encrypt(self, plaintext: bytes | str, nonce: bytes | None = None) -> bytes:
+        """Encrypt data with AES-256-GCM and return a versioned frame."""
         if isinstance(plaintext, str):
             plaintext = plaintext.encode()
 
-        iv = os.urandom(16)
-        counter = int.from_bytes(iv, 'big')
+        if nonce is None:
+            nonce = os.urandom(NONCE_SIZE)
+        if len(nonce) != NONCE_SIZE:
+            raise ValueError(f"AES-GCM nonce must be {NONCE_SIZE} bytes")
 
-        ciphertext = bytearray()
-        for i in range(0, len(plaintext), 16):
-            # Generate keystream block
-            ctr_bytes = counter.to_bytes(16, 'big')
-            keystream = hashlib.sha256(self.enc_key + ctr_bytes).digest()[:16]
-            counter += 1
-
-            # XOR plaintext chunk with keystream
-            chunk = plaintext[i:i+16]
-            encrypted_chunk = self._xor_bytes(chunk, keystream[:len(chunk)])
-            ciphertext.extend(encrypted_chunk)
-
-        # Compute HMAC over IV + ciphertext
-        message = iv + bytes(ciphertext)
-        mac = hmac.new(self.mac_key, message, hashlib.sha256).digest()
-
-        return message + mac
+        ciphertext = self._aead.encrypt(nonce, plaintext, AAD)
+        return FRAME_MAGIC + nonce + ciphertext
 
     def decrypt(self, data: bytes) -> bytes:
         """Decrypt data encrypted with encrypt().
 
-        Verifies HMAC-SHA256 before decrypting.
+        Verifies AES-GCM authentication before returning plaintext.
         """
-        if len(data) < 48:  # 16 (IV) + 0 (min ciphertext) + 32 (HMAC)
+        minimum_size = len(FRAME_MAGIC) + NONCE_SIZE + TAG_SIZE
+        if len(data) < minimum_size:
             raise ValueError("Data too short")
 
-        # Split components
-        mac_received = data[-32:]
-        message = data[:-32]
-        iv = message[:16]
-        ciphertext = message[16:]
+        if not data.startswith(FRAME_MAGIC):
+            raise ValueError("Unsupported legacy crypto frame; re-register session")
 
-        # Verify HMAC
-        mac_expected = hmac.new(self.mac_key, message, hashlib.sha256).digest()
-        if not hmac.compare_digest(mac_received, mac_expected):
-            raise ValueError("HMAC verification failed — data corrupted or wrong key")
-
-        # Decrypt CTR mode
-        counter = int.from_bytes(iv, 'big')
-        plaintext = bytearray()
-        for i in range(0, len(ciphertext), 16):
-            ctr_bytes = counter.to_bytes(16, 'big')
-            keystream = hashlib.sha256(self.enc_key + ctr_bytes).digest()[:16]
-            counter += 1
-
-            chunk = ciphertext[i:i+16]
-            decrypted_chunk = self._xor_bytes(chunk, keystream[:len(chunk)])
-            plaintext.extend(decrypted_chunk)
-
-        return bytes(plaintext)
+        nonce_start = len(FRAME_MAGIC)
+        nonce_end = nonce_start + NONCE_SIZE
+        nonce = data[nonce_start:nonce_end]
+        ciphertext = data[nonce_end:]
+        try:
+            return self._aead.decrypt(nonce, ciphertext, AAD)
+        except InvalidTag as exc:
+            raise ValueError("AES-GCM authentication failed") from exc
 
     def encrypt_json(self, obj) -> str:
         """Encrypt a JSON-serializable object, return base64 string."""

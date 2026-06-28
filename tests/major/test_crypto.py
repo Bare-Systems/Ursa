@@ -1,8 +1,15 @@
-"""Tests for UrsaCrypto encryption layer."""
+"""Tests for UrsaCrypto AEAD encryption layer."""
 
 import pytest
 
-from major.crypto import UrsaCrypto, derive_key, generate_session_key
+from major.crypto import (
+    FRAME_MAGIC,
+    NONCE_SIZE,
+    TAG_SIZE,
+    UrsaCrypto,
+    derive_key,
+    generate_session_key,
+)
 
 
 class TestEncryptDecryptRoundTrip:
@@ -39,8 +46,14 @@ class TestMessageFormat:
 
     def test_minimum_output_size(self, crypto_instance):
         ct = crypto_instance.encrypt(b"")
-        # 4 (length) + 16 (IV) + 0 (ciphertext) + 32 (HMAC) = 52 minimum
-        assert len(ct) >= 48
+        # 4-byte frame magic + 12-byte nonce + 16-byte AES-GCM tag.
+        assert len(ct) == len(FRAME_MAGIC) + NONCE_SIZE + TAG_SIZE
+
+    def test_frame_prefix_and_nonce_size(self, crypto_instance):
+        ct = crypto_instance.encrypt(b"framed")
+        assert ct.startswith(FRAME_MAGIC)
+        nonce = ct[len(FRAME_MAGIC):len(FRAME_MAGIC) + NONCE_SIZE]
+        assert len(nonce) == NONCE_SIZE
 
     def test_output_size_scales(self, crypto_instance):
         ct_short = crypto_instance.encrypt(b"a")
@@ -52,6 +65,16 @@ class TestMessageFormat:
         ct2 = crypto_instance.encrypt(b"same")
         assert ct1 != ct2
 
+    def test_known_answer_frame(self):
+        crypto = UrsaCrypto(bytes(range(32)))
+        nonce = bytes(range(NONCE_SIZE))
+        ct = crypto.encrypt(b"Ursa AES-GCM known answer", nonce=nonce)
+        assert ct.hex() == (
+            "55525332000102030405060708090a0b1270a57ae5a48748a006d4c691821602f"
+            "4b8a7559e0828194a485d9866b03cffc622048b7ac93e2486"
+        )
+        assert crypto.decrypt(ct) == b"Ursa AES-GCM known answer"
+
 
 class TestIntegrity:
 
@@ -59,19 +82,24 @@ class TestIntegrity:
         ct = crypto_instance.encrypt(b"secret data")
         tampered = bytearray(ct)
         tampered[20] ^= 0xFF
-        with pytest.raises(ValueError, match="HMAC"):
+        with pytest.raises(ValueError, match="authentication"):
             crypto_instance.decrypt(bytes(tampered))
 
     def test_wrong_key_raises(self):
         c1 = UrsaCrypto(b"key-one-aaaa-bbbb")
         c2 = UrsaCrypto(b"key-two-cccc-dddd")
         ct = c1.encrypt(b"data for key one")
-        with pytest.raises(ValueError, match="HMAC"):
+        with pytest.raises(ValueError, match="authentication"):
             c2.decrypt(ct)
 
     def test_data_too_short_raises(self, crypto_instance):
         with pytest.raises(ValueError, match="too short"):
             crypto_instance.decrypt(b"short")
+
+    def test_legacy_frame_rejected(self, crypto_instance):
+        old_ctr_hmac_shape = (b"\x00" * 16) + b"ciphertext" + (b"\x00" * 32)
+        with pytest.raises(ValueError, match="legacy"):
+            crypto_instance.decrypt(old_ctr_hmac_shape)
 
 
 class TestJsonEncryption:
@@ -85,6 +113,29 @@ class TestJsonEncryption:
     def test_list_roundtrip(self, crypto_instance):
         obj = [1, "two", None, True]
         assert crypto_instance.decrypt_json(crypto_instance.encrypt_json(obj)) == obj
+
+
+class TestBeaconInterop:
+
+    def test_python_beacon_encrypts_for_server_crypto(self):
+        from implants.beacon import UrsaBeacon
+
+        key_hex = bytes(range(32)).hex()
+        beacon = UrsaBeacon("http://127.0.0.1:6708", sandbox_check=False, amsi_bypass=False)
+        beacon.session_key = key_hex
+
+        payload = {"result": "uid=0(root)", "error": ""}
+        assert UrsaCrypto(key_hex).decrypt_json(beacon._encrypt_json(payload)) == payload
+
+    def test_python_beacon_decrypts_server_crypto(self):
+        from implants.beacon import UrsaBeacon
+
+        key_hex = bytes(range(32)).hex()
+        beacon = UrsaBeacon("http://127.0.0.1:6708", sandbox_check=False, amsi_bypass=False)
+        beacon.session_key = key_hex
+
+        payload = {"tasks": [{"id": "t1", "type": "whoami", "args": {}}]}
+        assert beacon._decrypt_json(UrsaCrypto(key_hex).encrypt_json(payload)) == payload
 
 
 class TestHelperFunctions:

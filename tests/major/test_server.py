@@ -5,6 +5,7 @@ import json
 import urllib.error
 import urllib.request
 
+from major.crypto import CRYPTO_SUITE, UrsaCrypto
 from major.db import create_task, get_events, get_session, get_task, list_tasks, set_setting
 
 
@@ -70,6 +71,9 @@ class TestRegistration:
         assert "session_id" in resp
         assert "key" in resp
         assert len(resp["key"]) == 64
+        assert resp["crypto"]["suite"] == CRYPTO_SUITE
+        assert resp["crypto"]["frame_magic"] == "URS2"
+        assert resp["crypto"]["legacy_encrypted_frames"] == "rejected"
 
         session = get_session(resp["session_id"])
         assert session is not None
@@ -87,11 +91,12 @@ class TestBeacon:
 
     def _register(self, host, port):
         _, resp = _post(host, port, "/register", {"hostname": "BEACON_TEST"})
-        return resp["session_id"]
+        return resp
 
     def test_beacon_returns_pending_tasks(self, c2_test_server):
         host, port = c2_test_server
-        sid = self._register(host, port)
+        reg = self._register(host, port)
+        sid = reg["session_id"]
         tid = create_task(sid, "shell", {"command": "whoami"})
 
         status, resp = _post(host, port, "/beacon", {"session_id": sid})
@@ -102,11 +107,28 @@ class TestBeacon:
 
     def test_beacon_empty_when_no_tasks(self, c2_test_server):
         host, port = c2_test_server
-        sid = self._register(host, port)
+        sid = self._register(host, port)["session_id"]
 
         status, resp = _post(host, port, "/beacon", {"session_id": sid})
         assert status == 200
         assert resp["tasks"] == []
+
+    def test_encrypted_beacon_returns_aead_task_frame(self, c2_test_server):
+        host, port = c2_test_server
+        reg = self._register(host, port)
+        sid = reg["session_id"]
+        tid = create_task(sid, "shell", {"command": "whoami"})
+
+        status, resp = _post(host, port, "/beacon", {
+            "session_id": sid,
+            "encrypted": True,
+        })
+        assert status == 200
+        assert "data" in resp
+        assert "tasks" not in resp
+        payload = UrsaCrypto(reg["key"]).decrypt_json(resp["data"])
+        assert payload["tasks"][0]["id"] == tid
+        assert payload["tasks"][0]["type"] == "shell"
 
     def test_beacon_unknown_session_returns_404(self, c2_test_server):
         host, port = c2_test_server
@@ -138,6 +160,42 @@ class TestResult:
         assert t["status"] == "completed"
         assert t["result"] == "uid=0(root)"
 
+    def test_submit_encrypted_result(self, c2_test_server):
+        host, port = c2_test_server
+        _, reg = _post(host, port, "/register", {"hostname": "R2"})
+        sid = reg["session_id"]
+        tid = create_task(sid, "shell", {"command": "id"})
+        crypto = UrsaCrypto(reg["key"])
+
+        status, resp = _post(host, port, "/result", {
+            "session_id": sid,
+            "task_id": tid,
+            "encrypted": True,
+            "data": crypto.encrypt_json({"result": "uid=501(op)", "error": ""}),
+        })
+        assert status == 200
+        assert resp["status"] == "ok"
+        t = get_task(tid)
+        assert t["status"] == "completed"
+        assert t["result"] == "uid=501(op)"
+
+    def test_legacy_encrypted_result_rejected(self, c2_test_server):
+        host, port = c2_test_server
+        _, reg = _post(host, port, "/register", {"hostname": "R3"})
+        sid = reg["session_id"]
+        tid = create_task(sid, "shell", {"command": "id"})
+        legacy_frame = base64.b64encode((b"\x00" * 16) + b"ciphertext" + (b"\x00" * 32)).decode()
+
+        status, resp = _post(host, port, "/result", {
+            "session_id": sid,
+            "task_id": tid,
+            "encrypted": True,
+            "data": legacy_frame,
+        })
+        assert status == 400
+        assert "legacy" in resp["error"]
+        assert get_task(tid)["status"] == "pending"
+
     def test_result_missing_fields_returns_400(self, c2_test_server):
         host, port = c2_test_server
         status, _ = _post(host, port, "/result", {})
@@ -156,6 +214,28 @@ class TestFileTransfer:
             "session_id": sid,
             "filename": "loot.txt",
             "data": base64.b64encode(file_data).decode(),
+        })
+        assert status == 200
+        fid = resp["file_id"]
+
+        status, body = _get(host, port, f"/download/{fid}")
+        assert status == 200
+        assert body == file_data
+
+    def test_encrypted_upload_and_download(self, c2_test_server):
+        host, port = c2_test_server
+        _, reg = _post(host, port, "/register", {"hostname": "FT2"})
+        sid = reg["session_id"]
+        file_data = b"authenticated upload"
+        payload = {
+            "filename": "loot-aead.txt",
+            "data": base64.b64encode(file_data).decode(),
+        }
+
+        status, resp = _post(host, port, "/upload", {
+            "session_id": sid,
+            "encrypted": True,
+            "data": UrsaCrypto(reg["key"]).encrypt_json(payload),
         })
         assert status == 200
         fid = resp["file_id"]

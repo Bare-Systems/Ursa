@@ -4,6 +4,10 @@ All notable changes to Ursa are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the prototype C2 encrypted frame format with versioned AES-256-GCM envelopes for encrypted tasking, results, and beacon uploads; legacy encrypted frames now fail closed and must re-register under the AEAD protocol.
+
 ### Added
 
 - CI: added `publish` job to `.github/workflows/ci.yml` that builds and pushes `ghcr.io/bare-systems/ursa` to GitHub Container Registry on every push to `main`; builds without pushing on PRs.

@@ -256,7 +256,7 @@ Ursa Major is an HTTP-based C2 server with:
 
 - Session lifecycle tracking (active/stale/dead)
 - 13 core task types (`shell`, `sysinfo`, `download`, `upload`, `sleep`, `kill`, `post`, etc.)
-- Per-session encrypted communications (AES-256-CTR + HMAC-SHA256)
+- Per-session encrypted tasking/result/upload envelopes (AES-256-GCM)
 - Optional TLS and traffic profiles
 - BearClaw-facing control-plane service with bearer auth plus bootstrap web auth config
 - 60+ MCP tools for operations, governance, and campaign workflows

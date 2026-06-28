@@ -243,7 +243,17 @@ When accessed via MCP (root `server.py`), operators get 60+ tools:
 
 ## Encryption
 
-All implant communication (after registration) is encrypted with per-session AES-256-CTR + HMAC-SHA256. Keys are negotiated during the `/register` handshake.
+Encrypted clients use per-session AES-256-GCM envelopes for tasking, task
+results, and beacon file uploads after `/register`. Registration returns a
+32-byte hex session key plus `crypto` metadata:
+
+- Suite: `AES-256-GCM`
+- Frame: `URS2 || 12-byte nonce || ciphertext || 16-byte tag`
+- AAD: `ursa-major-c2:v2:aes-256-gcm`
+
+Pre-AEAD encrypted frames are rejected; old encrypted implants must re-register
+or be redeployed. Clients that omit `encrypted: true` still use the plaintext
+compatibility path and should only be used behind TLS or in local test runs.
 
 ## Traffic Profiles
 
@@ -284,7 +294,7 @@ SQLite (WAL mode) at `major/ursa.db` (auto-created on first run, excluded from v
 major/
 ├── server.py       # HTTP C2 server (registration, beacon, result, upload, download)
 ├── db.py           # SQLite database layer
-├── crypto.py       # AES-256-CTR + HMAC-SHA256 encryption
+├── crypto.py       # AES-256-GCM encrypted C2 envelopes
 ├── governance.py   # Step-up approvals, immutable audit chain, policy matrix
 ├── profiles.py     # Traffic profiles (URL remapping, headers, UA filtering)
 ├── cert.py         # TLS certificate generation (self-signed X.509 with SAN)

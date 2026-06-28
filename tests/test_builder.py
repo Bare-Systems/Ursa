@@ -911,8 +911,8 @@ class TestRealZigTemplateStructure:
         for task in ("shell", "sysinfo", "whoami", "sleep", "kill"):
             assert task in src, f"Task type '{task}' not mentioned in Zig template"
 
-    def test_uses_general_purpose_allocator(self):
-        assert "GeneralPurposeAllocator" in self._src()
+    def test_uses_debug_allocator(self):
+        assert "DebugAllocator" in self._src()
 
     @pytest.mark.skipif(
         __import__("shutil").which("zig") is None,
