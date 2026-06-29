@@ -110,7 +110,14 @@ major:
   web:
     base_path: /ursa            # optional reverse-proxy mount path for the control-plane service
     auth:
-      api_token: your-shared-bearclaw-token
+      api_token: your-shared-bearclaw-token  # migration/static fallback
+      api_token_actor: bearclaw-web
+      api_token_role: admin
+      api_token_scopes: ["*"]
+      api_signing_keys:
+        - rotate-this-32-byte-signing-secret
+      api_audience: ursa-control-plane
+      api_replay_ttl_seconds: 300
   auto_recon:
     enabled: true
     modules:
@@ -151,16 +158,39 @@ Direct agent clients consume the same control-plane service over `/mcp`.
 operator product surface, but it is the supported REST + MCP facade between
 BearClaw/MCP clients and the Ursa datastore.
 
-Required config:
+New control-plane clients should use signed bearer tokens:
 
 ```yaml
 major:
   web:
     auth:
-      api_token: your-shared-bearclaw-token
+      api_signing_keys:
+        - rotate-this-32-byte-signing-secret
+      api_audience: ursa-control-plane
+      api_replay_ttl_seconds: 300
 ```
 
-BearClawWeb must set `URSA_TOKEN` to the same value.
+The preferred bearer format is `ursa.v1.<payload>.<signature>`. The payload is
+base64url JSON signed with HMAC-SHA256 by one of `api_signing_keys`; it must
+include `sub`, `role`, `scopes`, `aud`, `exp`, and `jti`. The server verifies
+the signature, audience, expiry, not-before time, replay `jti`, role, and
+scope before dispatching the route.
+
+Route authorization is server-side and auditable. Caller-provided
+`X-BearClaw-Actor` and `X-BearClaw-Role` headers are accepted only as legacy
+metadata and are not authority for permission decisions.
+
+For key rotation, add the new key to `api_signing_keys`, start minting with it,
+then remove the old key after all old tokens have expired. Each signed `jti` is
+accepted once within `api_replay_ttl_seconds`.
+
+`api_token` remains available as a migration/static fallback. When it is used,
+the actor, role, scopes, audience, and expiry come from server config
+(`api_token_actor`, `api_token_role`, `api_token_scopes`, `api_audience`, and
+optional `api_token_expires_at`), not from request headers. BearClawWeb and the
+host collector still integrate over the same HTTP path: send
+`Authorization: Bearer <token>` to `/api/v1/*`; prefer a short-lived signed
+token and use `URSA_TOKEN` only for the legacy static token mode.
 
 Endpoint paths vary by traffic profile (e.g. the `jquery` profile remaps `/beacon` to `/jquery/3.7.1/jquery.min.js`).
 

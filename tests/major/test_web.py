@@ -293,6 +293,12 @@ class TestRoleHelpers:
             def get(path, default=None):
                 if path == "major.web.auth.api_token":
                     return "shared-token"
+                if path == "major.web.auth.api_token_actor":
+                    return "bearclaw-web"
+                if path == "major.web.auth.api_token_role":
+                    return "admin"
+                if path == "major.web.auth.api_token_scopes":
+                    return ["*"]
                 return default
 
         monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
@@ -302,10 +308,10 @@ class TestRoleHelpers:
             x_bearclaw_actor="joe@example.com",
             x_bearclaw_role="admin",
         )
-        assert user["username"] == "joe@example.com"
+        assert user["username"] == "bearclaw-web"
         assert user["role"] == "admin"
 
-    def test_require_api_role_rejects_invalid_token(self, monkeypatch):
+    def test_require_api_role_rejects_invalid_token(self, monkeypatch, tmp_db):
         from fastapi import HTTPException
 
         from major.web.auth import require_api_role
@@ -326,6 +332,259 @@ class TestRoleHelpers:
                 x_bearclaw_role="admin",
             )
         assert exc_info.value.status_code == 401
+
+    def test_static_api_token_ignores_spoofed_role_header(self, monkeypatch, tmp_db):
+        from fastapi import HTTPException
+
+        from major.web.auth import require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_token":
+                    return "shared-token"
+                if path == "major.web.auth.api_token_actor":
+                    return "collector"
+                if path == "major.web.auth.api_token_role":
+                    return "operator"
+                if path == "major.web.auth.api_token_scopes":
+                    return ["read"]
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+
+        with pytest.raises(HTTPException) as exc_info:
+            require_api_role(
+                authorization="Bearer shared-token",
+                x_bearclaw_actor="attacker",
+                x_bearclaw_role="admin",
+                role="admin",
+                scope="admin",
+            )
+        assert exc_info.value.status_code == 403
+
+    def test_legacy_api_tokens_dict_uses_server_side_record(self, monkeypatch):
+        from major.web.auth import require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_tokens":
+                    return {
+                        "scoped-token": {
+                            "actor": "host-collector",
+                            "role": "operator",
+                            "scopes": ["write"],
+                        }
+                    }
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+
+        user = require_api_role(
+            authorization="Bearer scoped-token",
+            x_bearclaw_actor="attacker",
+            x_bearclaw_role="admin",
+            role="operator",
+            scope="write",
+        )
+        assert user["username"] == "host-collector"
+        assert user["role"] == "operator"
+        assert user["scopes"] == ["write"]
+
+    def test_api_authz_failure_logs_audit_event(self, monkeypatch, tmp_db):
+        from fastapi import HTTPException
+
+        from major.db import get_events
+        from major.web.auth import require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_token":
+                    return "shared-token"
+                if path == "major.web.auth.api_token_actor":
+                    return "collector"
+                if path == "major.web.auth.api_token_role":
+                    return "operator"
+                if path == "major.web.auth.api_token_scopes":
+                    return ["read"]
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+
+        with pytest.raises(HTTPException):
+            require_api_role(
+                authorization="Bearer shared-token",
+                x_bearclaw_actor="attacker",
+                x_bearclaw_role="admin",
+                role="admin",
+                scope="admin",
+            )
+
+        events = get_events(limit=10)
+        assert any(
+            event["level"] == "warning"
+            and event["source"] == "auth"
+            and "collector" in event["message"]
+            and "Insufficient role" in event["message"]
+            for event in events
+        )
+
+    def test_signed_api_token_accepts_server_verified_claims(self, monkeypatch):
+        from major.web.auth import clear_api_replay_cache, mint_api_token, require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_signing_keys":
+                    return ["test-signing-key"]
+                if path == "major.web.auth.api_audience":
+                    return "ursa-control-plane"
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+        clear_api_replay_cache()
+        token = mint_api_token(
+            "bearclaw-web",
+            role="reviewer",
+            scopes=["review"],
+            signing_key="test-signing-key",
+            jti="signed-ok",
+        )
+
+        user = require_api_role(
+            authorization=f"Bearer {token}",
+            x_bearclaw_actor="spoofed",
+            x_bearclaw_role="admin",
+            role="reviewer",
+            scope="review",
+        )
+        assert user["username"] == "bearclaw-web"
+        assert user["role"] == "reviewer"
+        assert user["auth_type"] == "signed-token"
+
+    def test_signed_api_token_rejects_expired(self, monkeypatch, tmp_db):
+        from fastapi import HTTPException
+
+        from major.web.auth import clear_api_replay_cache, mint_api_token, require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_signing_keys":
+                    return ["test-signing-key"]
+                if path == "major.web.auth.api_audience":
+                    return "ursa-control-plane"
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+        clear_api_replay_cache()
+        token = mint_api_token(
+            "bearclaw-web",
+            role="admin",
+            scopes=["admin"],
+            signing_key="test-signing-key",
+            jti="expired",
+            now=1,
+            expires_in=1,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            require_api_role(authorization=f"Bearer {token}", role="admin", scope="admin")
+        assert exc_info.value.status_code == 401
+        assert "expired" in str(exc_info.value.detail).lower()
+
+    def test_signed_api_token_rejects_wrong_audience(self, monkeypatch, tmp_db):
+        from fastapi import HTTPException
+
+        from major.web.auth import clear_api_replay_cache, mint_api_token, require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_signing_keys":
+                    return ["test-signing-key"]
+                if path == "major.web.auth.api_audience":
+                    return "ursa-control-plane"
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+        clear_api_replay_cache()
+        token = mint_api_token(
+            "bearclaw-web",
+            role="admin",
+            scopes=["admin"],
+            audience="other-service",
+            signing_key="test-signing-key",
+            jti="wrong-audience",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            require_api_role(authorization=f"Bearer {token}", role="admin", scope="admin")
+        assert exc_info.value.status_code == 401
+        assert "audience" in str(exc_info.value.detail).lower()
+
+    def test_signed_api_token_rejects_replay(self, monkeypatch, tmp_db):
+        from fastapi import HTTPException
+
+        from major.web.auth import clear_api_replay_cache, mint_api_token, require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_signing_keys":
+                    return ["test-signing-key"]
+                if path == "major.web.auth.api_audience":
+                    return "ursa-control-plane"
+                if path == "major.web.auth.api_replay_ttl_seconds":
+                    return 300
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+        clear_api_replay_cache()
+        token = mint_api_token(
+            "bearclaw-web",
+            role="admin",
+            scopes=["admin"],
+            signing_key="test-signing-key",
+            jti="replay-me",
+        )
+
+        require_api_role(authorization=f"Bearer {token}", role="admin", scope="admin")
+        with pytest.raises(HTTPException) as exc_info:
+            require_api_role(authorization=f"Bearer {token}", role="admin", scope="admin")
+        assert exc_info.value.status_code == 401
+        assert "replay" in str(exc_info.value.detail).lower()
+
+    def test_signed_api_token_rejects_least_privilege_scope_failure(self, monkeypatch, tmp_db):
+        from fastapi import HTTPException
+
+        from major.web.auth import clear_api_replay_cache, mint_api_token, require_api_role
+
+        class DummyConfig:
+            @staticmethod
+            def get(path, default=None):
+                if path == "major.web.auth.api_signing_keys":
+                    return ["test-signing-key"]
+                if path == "major.web.auth.api_audience":
+                    return "ursa-control-plane"
+                return default
+
+        monkeypatch.setattr("major.web.auth.get_config", lambda: DummyConfig())
+        clear_api_replay_cache()
+        token = mint_api_token(
+            "bearclaw-web",
+            role="admin",
+            scopes=["read"],
+            signing_key="test-signing-key",
+            jti="least-privilege",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            require_api_role(authorization=f"Bearer {token}", role="admin", scope="admin")
+        assert exc_info.value.status_code == 403
+        assert "scope" in str(exc_info.value.detail).lower()
 
 
 # ---------------------------------------------------------------------------

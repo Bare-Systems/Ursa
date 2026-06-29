@@ -48,7 +48,18 @@ DEFAULTS = {
                 "bootstrap_username": "admin",
                 "bootstrap_password": "change-me-now",
                 "bootstrap_role": "admin",
+                # Migration static token. Role/scopes are server-side and
+                # request headers are not authoritative.
                 "api_token": "",
+                "api_token_actor": "bearclaw-web",
+                "api_token_role": "admin",
+                "api_token_scopes": ["*"],
+                "api_tokens": [],
+                # Preferred service-token mode. Clients mint short-lived
+                # ursa.v1 tokens signed by the first key; all keys verify.
+                "api_signing_keys": [],
+                "api_audience": "ursa-control-plane",
+                "api_replay_ttl_seconds": 300,
             },
         },
         "implant_defaults": {

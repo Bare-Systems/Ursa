@@ -224,6 +224,7 @@ async def auth_middleware(request, call_next):
                 x_bearclaw_actor=request.headers.get("x-bearclaw-actor"),
                 x_bearclaw_role=request.headers.get("x-bearclaw-role"),
                 role="admin",
+                scope="admin",
                 allow_missing_token=True,
             )
         except HTTPException as exc:

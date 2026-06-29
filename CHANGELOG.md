@@ -6,6 +6,7 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Hardened control-plane API authentication with signed scoped bearer tokens, server-side route permissions, replay/expiry/audience checks, and migration-only static token authority.
 - Replaced the prototype C2 encrypted frame format with versioned AES-256-GCM envelopes for encrypted tasking, results, and beacon uploads; legacy encrypted frames now fail closed and must re-register under the AEAD protocol.
 
 ### Added
