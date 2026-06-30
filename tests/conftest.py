@@ -53,12 +53,18 @@ def c2_test_server(tmp_db):
     server = HTTPServer(("127.0.0.1", 0), UrsaC2Handler)
     host, port = server.server_address
 
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.01},
+        daemon=True,
+    )
     thread.start()
 
     yield host, port
 
     server.shutdown()
+    server.server_close()
+    thread.join(timeout=1)
 
 
 @pytest.fixture

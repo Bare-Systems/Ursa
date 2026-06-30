@@ -6,6 +6,7 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Reduced the default pytest suite runtime by caching repeated post-exploitation smoke checks, using deterministic aggregate loot inputs, and tightening C2 test-server teardown polling.
 - Added production-mode config validation and a CI default-secret scan so non-dev deployments fail fast on known development secrets, missing API credentials, or short signing/static tokens.
 - Hardened control-plane API authentication with signed scoped bearer tokens, server-side route permissions, replay/expiry/audience checks, and migration-only static token authority.
 - Replaced the prototype C2 encrypted frame format with versioned AES-256-GCM envelopes for encrypted tasking, results, and beacon uploads; legacy encrypted frames now fail closed and must re-register under the AEAD protocol.

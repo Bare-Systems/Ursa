@@ -1,6 +1,7 @@
 """Tests for implemented post-exploitation enumeration modules."""
 
 import platform
+from functools import cache
 
 import pytest
 
@@ -20,6 +21,7 @@ pytestmark = pytest.mark.skipif(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+@cache
 def _run(module_class):
     """Instantiate and run a module; return the ModuleResult."""
     result = module_class().run({})

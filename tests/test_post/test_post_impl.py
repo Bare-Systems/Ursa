@@ -8,6 +8,7 @@ Covers the 11 implemented modules:
 """
 
 import platform
+from copy import deepcopy
 
 import pytest
 
@@ -21,9 +22,83 @@ IS_LINUX   = SYSTEM == "Linux"
 IS_MACOS   = SYSTEM == "Darwin"
 IS_WINDOWS = SYSTEM == "Windows"
 
+_DISPATCH_CACHE: dict[str, dict] = {}
+
 
 def dispatch(name, args=None):
-    return PostLoader().dispatch(name, args or {})
+    args = args or {}
+    if args:
+        return PostLoader().dispatch(name, args)
+
+    if name not in _DISPATCH_CACHE:
+        _DISPATCH_CACHE[name] = PostLoader().dispatch(name, args)
+    return deepcopy(_DISPATCH_CACHE[name])
+
+
+def _fake_enum_safe_run(name):
+    data = {
+        "enum/sysinfo": {
+            "hostname": "test-host",
+            "os": "TestOS",
+            "os_release": "1.0",
+            "env": {},
+            "container_vm_hints": [],
+        },
+        "enum/privesc": {
+            "suid_sgid": {"gtfobins_hits": []},
+            "sudo": {"has_nopasswd": False, "nopasswd_entries": []},
+            "writable_path": {"writable": []},
+            "writable_cron": {"writable_cron_paths": []},
+            "docker": {"exploitable": False},
+            "capabilities": {"interesting": []},
+            "shadow_passwd": {"shadow_readable": False, "passwd_writable": False},
+            "nfs": {"no_root_squash_entries": []},
+            "env": {"dangerous_env": {}},
+        },
+        "enum/users": {
+            "current_user": {
+                "username": "tester",
+                "uid": 1000,
+                "is_root": False,
+                "in_docker_group": False,
+                "in_sudo_group": False,
+            },
+            "ssh_keys": [],
+            "active_sessions": "",
+        },
+        "enum/network": {
+            "hostname": "test-host",
+            "internal_hosts_seen": [],
+            "listening_ports": [],
+        },
+    }
+    return data.get(name, {}), ""
+
+
+def _fake_cred_safe_run(name):
+    data = {
+        "cred/browser": {"credentials": [], "count": 0},
+        "cred/keychain": {
+            "credential_files": [],
+            "items": [],
+            "retrieved": [],
+            "secretstorage_items": [],
+        },
+        "cred/memory": {
+            "agent_keys": [],
+            "key_files": [],
+            "unencrypted_private_keys": [],
+        },
+    }
+    return data.get(name, {}), ""
+
+
+def _patch_aggregate_safe_runs(monkeypatch):
+    from post.cred import loot as cred_loot
+    from post.enum import loot as enum_loot
+
+    monkeypatch.setattr(enum_loot, "_safe_run", _fake_enum_safe_run)
+    monkeypatch.setattr(cred_loot, "_safe_run", _fake_cred_safe_run)
 
 
 # ── Shared metadata checks ─────────────────────────────────────────────────────
@@ -50,8 +125,9 @@ class TestImplementedMetadata:
         assert modules[name]["implemented"] is True
 
     @pytest.mark.parametrize("name", IMPLEMENTED_MODULES)
-    def test_dispatch_returns_module_result_shape(self, name):
-        result = PostLoader().dispatch(name)
+    def test_dispatch_returns_module_result_shape(self, name, monkeypatch):
+        _patch_aggregate_safe_runs(monkeypatch)
+        result = dispatch(name)
         assert isinstance(result, dict)
         assert "ok" in result
         assert "output" in result
@@ -731,6 +807,10 @@ class TestRegistryPersistModule:
 class TestLootModule:
     """Integration tests for the enum/loot correlation module."""
 
+    @pytest.fixture(autouse=True)
+    def _use_fast_aggregate_inputs(self, monkeypatch):
+        _patch_aggregate_safe_runs(monkeypatch)
+
     def test_implemented_true(self):
         from post.enum.loot import LootModule
         assert LootModule.IMPLEMENTED is True
@@ -744,9 +824,11 @@ class TestLootModule:
         from post.enum.loot import LootModule
         assert issubclass(LootModule, PostModule)
 
-    def test_run_returns_module_result(self):
-        from post.enum.loot import LootModule
-        result = LootModule().run({})
+    def test_run_returns_module_result(self, monkeypatch):
+        from post.enum import loot as loot_mod
+
+        monkeypatch.setattr(loot_mod, "_safe_run", _fake_enum_safe_run)
+        result = loot_mod.LootModule().run({})
         assert isinstance(result, ModuleResult)
 
     @pytest.mark.skipif(not (IS_LINUX or IS_MACOS), reason="linux/macos only")
@@ -1047,6 +1129,10 @@ class TestLootCorrelator:
 class TestCredLootModule:
     """Integration tests for the cred/loot correlation module."""
 
+    @pytest.fixture(autouse=True)
+    def _use_fast_aggregate_inputs(self, monkeypatch):
+        _patch_aggregate_safe_runs(monkeypatch)
+
     def test_implemented_true(self):
         from post.cred.loot import CredLootModule
         assert CredLootModule.IMPLEMENTED is True
@@ -1060,9 +1146,11 @@ class TestCredLootModule:
         from post.cred.loot import CredLootModule
         assert issubclass(CredLootModule, PostModule)
 
-    def test_run_returns_module_result(self):
-        from post.cred.loot import CredLootModule
-        result = CredLootModule().run({})
+    def test_run_returns_module_result(self, monkeypatch):
+        from post.cred import loot as loot_mod
+
+        monkeypatch.setattr(loot_mod, "_safe_run", _fake_cred_safe_run)
+        result = loot_mod.CredLootModule().run({})
         assert isinstance(result, ModuleResult)
 
     @pytest.mark.skipif(not (IS_LINUX or IS_MACOS), reason="linux/macos only")
