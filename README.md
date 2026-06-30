@@ -140,9 +140,10 @@ python3 -m major.c2
 python3 -m major.cp
 ```
 
-Bootstrap credentials for the control-plane service (change before any non-local deployment):
-- Username: `admin`
-- Password: `change-me-now`
+Development defaults are for local use only. Before any non-local deployment,
+set `environment: production` in `ursa.yaml` or export `URSA_ENV=production`,
+then configure generated secrets for the control plane and governance signing.
+Production mode refuses to start with known development defaults.
 
 ## Blink Homelab Contract
 
@@ -169,15 +170,24 @@ cp ursa.yaml.example ursa.yaml
 Example:
 
 ```yaml
+environment: production
 major:
   port: 6708
   traffic_profile: default        # default | jquery | office365 | github-api
   tls:
     enabled: false
+  web:
+    auth:
+      session_secret: "<generated with: python -c 'import secrets; print(secrets.token_urlsafe(32))'>"
+      bootstrap_username: "admin"
+      bootstrap_password: "<generated password>"
+      api_signing_keys:
+        - "<generated with: python -c 'import secrets; print(secrets.token_urlsafe(32))'>"
   auto_recon:
     enabled: true
   governance:
     require_step_up_approval: true
+    approval_signing_key: "<generated with: python -c 'import secrets; print(secrets.token_urlsafe(32))'>"
 ```
 
 ---

@@ -267,12 +267,7 @@ def normalize_args_string(args: str) -> dict[str, Any]:
 
 def _sign_approval_decision(approval_id: str, actor: str, approved: bool, note: str, signed_at: float) -> str:
     """Create an HMAC signature for approval decisions."""
-    secret = str(
-        get_config().get(
-            "major.governance.approval_signing_key",
-            "ursa-dev-approval-signing-key",
-        )
-    ).encode("utf-8")
+    secret = str(get_config().get("major.governance.approval_signing_key", "")).encode("utf-8")
     payload = f"{approval_id}|{actor}|{1 if approved else 0}|{note}|{int(signed_at)}".encode()
     return hmac.new(secret, payload, hashlib.sha256).hexdigest()
 

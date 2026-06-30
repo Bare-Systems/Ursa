@@ -18,8 +18,10 @@ Profile support:
     Profile values override base config. CLI flags override profiles.
 """
 
+import os
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 try:
     import yaml
@@ -32,6 +34,10 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).parent.parent
 
 DEFAULTS = {
+    # Dev defaults are allowed only in local/test modes. Set `environment` to
+    # production/staging/field, or set URSA_ENV/URSA_PRODUCTION, to fail fast on
+    # placeholder secrets.
+    "environment": "development",
     "major": {
         "host": "0.0.0.0",
         "port": 6708,
@@ -174,6 +180,143 @@ class UrsaConfig:
         return self._data
 
 
+# ── Production Validation ──
+
+DEV_ENVIRONMENTS = {"", "dev", "development", "local", "test", "testing"}
+TRUE_VALUES = {"1", "true", "yes", "on"}
+
+DEFAULT_SECRET_VALUES = {
+    "ursa-dev-session-secret-change-me",
+    "change-me-now",
+    "ursa-dev-approval-signing-key",
+    "your-shared-bearclaw-token",
+    "rotate-this-32-byte-signing-secret",
+    "test-signing-key",
+    "ursa-test-api-token",
+    "secret-token",
+}
+
+
+class ConfigValidationError(ValueError):
+    """Raised when production configuration still contains dev defaults."""
+
+    def __init__(self, errors: list[str]):
+        self.errors = errors
+        super().__init__("Invalid production Ursa configuration:\n- " + "\n- ".join(errors))
+
+
+def is_production_mode(config: UrsaConfig) -> bool:
+    """Return whether config should be validated as a non-dev deployment."""
+    if os.environ.get("URSA_PRODUCTION", "").strip().lower() in TRUE_VALUES:
+        return True
+
+    env = (
+        os.environ.get("URSA_ENV")
+        or os.environ.get("URSA_MODE")
+        or str(config.get("environment", config.get("major.environment", "development")))
+    )
+    return env.strip().lower() not in DEV_ENVIRONMENTS
+
+
+def _secret_errors(path: str, value, *, min_length: int) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return [f"{path} must be set"]
+    if text in DEFAULT_SECRET_VALUES:
+        return [f"{path} still uses a known development/default secret"]
+    if len(text.encode()) < min_length:
+        return [f"{path} must be at least {min_length} bytes"]
+    return []
+
+
+def _configured_api_tokens(config: UrsaConfig) -> list[tuple[str, str]]:
+    tokens: list[tuple[str, str]] = []
+
+    static_token = str(config.get("major.web.auth.api_token", "")).strip()
+    if static_token:
+        tokens.append(("major.web.auth.api_token", static_token))
+
+    configured = config.get("major.web.auth.api_tokens", [])
+    if isinstance(configured, str):
+        if configured.strip():
+            tokens.append(("major.web.auth.api_tokens", configured.strip()))
+    elif isinstance(configured, dict):
+        for key, value in configured.items():
+            if isinstance(value, dict):
+                token = str(value.get("token", key)).strip()
+            elif value:
+                token = str(value).strip()
+            else:
+                token = str(key).strip()
+            if token:
+                tokens.append((f"major.web.auth.api_tokens.{key}", token))
+    else:
+        for index, value in enumerate(configured or []):
+            if isinstance(value, dict):
+                token = str(value.get("token", "")).strip()
+            else:
+                token = str(value).strip()
+            if token:
+                tokens.append((f"major.web.auth.api_tokens[{index}]", token))
+
+    return tokens
+
+
+def validate_config(config: UrsaConfig, *, production: bool | None = None) -> None:
+    """Validate production-only safety requirements for runtime configuration."""
+    if production is None:
+        production = is_production_mode(config)
+    if not production:
+        return
+
+    errors: list[str] = []
+    errors.extend(
+        _secret_errors(
+            "major.web.auth.session_secret",
+            config.get("major.web.auth.session_secret", ""),
+            min_length=32,
+        )
+    )
+    errors.extend(
+        _secret_errors(
+            "major.web.auth.bootstrap_password",
+            config.get("major.web.auth.bootstrap_password", ""),
+            min_length=12,
+        )
+    )
+    errors.extend(
+        _secret_errors(
+            "major.governance.approval_signing_key",
+            config.get("major.governance.approval_signing_key", ""),
+            min_length=32,
+        )
+    )
+
+    signing_keys = config.get("major.web.auth.api_signing_keys", [])
+    if isinstance(signing_keys, str):
+        signing_keys = [signing_keys]
+    clean_signing_keys = [str(key).strip() for key in signing_keys or [] if str(key).strip()]
+    api_tokens = _configured_api_tokens(config)
+
+    if not clean_signing_keys and not api_tokens:
+        errors.append("major.web.auth requires api_signing_keys or api_token/api_tokens")
+
+    for index, key in enumerate(clean_signing_keys):
+        errors.extend(
+            _secret_errors(
+                f"major.web.auth.api_signing_keys[{index}]",
+                key,
+                min_length=32,
+            )
+        )
+
+    for path, token in api_tokens:
+        errors.extend(_secret_errors(path, token, min_length=32))
+
+    if errors:
+        raise ConfigValidationError(errors)
+
+
 # ── Loader ──
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -199,7 +342,12 @@ def _find_config_file() -> Path | None:
     return None
 
 
-def load_config(path: str | Path | None = None, profile: str | None = None) -> UrsaConfig:
+def load_config(
+    path: str | Path | None = None,
+    profile: str | None = None,
+    *,
+    validate: bool = True,
+) -> UrsaConfig:
     """Load configuration from YAML file with defaults.
 
     Args:
@@ -209,7 +357,7 @@ def load_config(path: str | Path | None = None, profile: str | None = None) -> U
     Returns:
         UrsaConfig instance with merged values.
     """
-    config = deepcopy(DEFAULTS)
+    config: dict[str, Any] = deepcopy(DEFAULTS)
 
     # Find and load YAML
     config_path = Path(path) if path else _find_config_file()
@@ -224,20 +372,25 @@ def load_config(path: str | Path | None = None, profile: str | None = None) -> U
             )
         else:
             with open(config_path) as f:
-                user_config = yaml.safe_load(f) or {}
+                user_config: dict[str, Any] = yaml.safe_load(f) or {}
             config = _deep_merge(config, user_config)
 
     # Apply profile if specified
-    if profile and profile in config.get("profiles", {}):
-        profile_data = config["profiles"][profile]
-        config = _deep_merge(config, profile_data)  # type: ignore[arg-type]
+    profiles = config.get("profiles", {})
+    if profile and isinstance(profiles, dict) and profile in profiles:
+        profile_data = profiles[profile]
+        if isinstance(profile_data, dict):
+            config = _deep_merge(config, profile_data)
 
     # Resolve relative db_path to absolute
     db_path = Path(str(config["major"]["db_path"]))
     if not db_path.is_absolute():
         config["major"]["db_path"] = str(PROJECT_ROOT / db_path)
 
-    return UrsaConfig(config)
+    loaded = UrsaConfig(config)
+    if validate:
+        validate_config(loaded)
+    return loaded
 
 
 # ── Module-level singleton ──

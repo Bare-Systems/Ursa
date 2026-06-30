@@ -101,6 +101,7 @@ Ursa datastore.
 Create a `ursa.yaml` at the project root to override defaults:
 
 ```yaml
+environment: production
 major:
   port: 6708
   traffic_profile: jquery       # default | jquery | office365 | github-api
@@ -110,12 +111,15 @@ major:
   web:
     base_path: /ursa            # optional reverse-proxy mount path for the control-plane service
     auth:
-      api_token: your-shared-bearclaw-token  # migration/static fallback
+      session_secret: "<generated 32+ byte secret>"
+      bootstrap_username: admin
+      bootstrap_password: "<generated bootstrap password>"
+      api_token: "<generated 32+ byte static token>"  # migration/static fallback
       api_token_actor: bearclaw-web
       api_token_role: admin
       api_token_scopes: ["*"]
       api_signing_keys:
-        - rotate-this-32-byte-signing-secret
+        - "<generated 32+ byte signing key>"
       api_audience: ursa-control-plane
       api_replay_ttl_seconds: 300
   auto_recon:
@@ -129,6 +133,7 @@ major:
   governance:
     require_step_up_approval: true
     step_up_risks: [high, critical]
+    approval_signing_key: "<generated 32+ byte signing key>"
   redirector:
     enabled: true
     listen_port: 80
@@ -161,11 +166,12 @@ BearClaw/MCP clients and the Ursa datastore.
 New control-plane clients should use signed bearer tokens:
 
 ```yaml
+environment: production
 major:
   web:
     auth:
       api_signing_keys:
-        - rotate-this-32-byte-signing-secret
+        - "<generated 32+ byte signing key>"
       api_audience: ursa-control-plane
       api_replay_ttl_seconds: 300
 ```
@@ -191,6 +197,29 @@ optional `api_token_expires_at`), not from request headers. BearClawWeb and the
 host collector still integrate over the same HTTP path: send
 `Authorization: Bearer <token>` to `/api/v1/*`; prefer a short-lived signed
 token and use `URSA_TOKEN` only for the legacy static token mode.
+
+### Production Secret Validation
+
+Local development can use defaults. Non-dev deployments should set
+`environment: production` in `ursa.yaml`, or export `URSA_ENV=production` /
+`URSA_PRODUCTION=1`, before starting `major.c2` or `major.cp`. In production
+mode, Ursa fails fast if the config still has known development secrets,
+missing control-plane API credentials, or signing/static tokens shorter than 32
+bytes.
+
+Generate secrets with Python so they do not pass through shell history:
+
+```bash
+python3 - <<'PY'
+import secrets
+for name in ("session_secret", "bootstrap_password", "api_signing_key", "approval_signing_key"):
+    print(f"{name}: {secrets.token_urlsafe(32)}")
+PY
+```
+
+Rotate `session_secret` and `approval_signing_key` during a maintenance window.
+For `api_signing_keys`, add the new key first, mint new short-lived tokens with
+it, wait for old tokens to expire, then remove the old key.
 
 Endpoint paths vary by traffic profile (e.g. the `jquery` profile remaps `/beacon` to `/jquery/3.7.1/jquery.min.js`).
 

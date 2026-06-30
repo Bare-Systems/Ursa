@@ -23,10 +23,13 @@ jobs:
           pip install pytest pytest-cov ruff mypy fastapi jinja2 uvicorn sse-starlette pyyaml
 
       - name: Ruff
-        run: ruff check major tests
+        run: ruff check major tests scripts/check_default_secrets.py
 
       - name: Mypy
         run: mypy major server.py minor/src/ursa_minor
+
+      - name: Default secret scan
+        run: python scripts/check_default_secrets.py
 
       - name: Pytest
         run: pytest

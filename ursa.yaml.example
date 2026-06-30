@@ -1,7 +1,10 @@
 # Ursa Configuration
 # ==================
-# Copy to ursa.yaml and customize. All values shown are defaults.
-# Any omitted value falls back to the default automatically.
+# Copy to ursa.yaml and customize. Most values shown are defaults.
+# Secret fields are intentionally blank here; generate real values before
+# production use. Any omitted value falls back to the default automatically.
+
+environment: "development"        # development | production
 
 major:
   # C2 server
@@ -17,7 +20,17 @@ major:
     host: "0.0.0.0"
     port: 6707
     auth:
-      api_token: ""               # Bearer token for BearClawWeb -> Ursa API calls
+      session_secret: ""          # Production: generated 32+ byte session secret
+      bootstrap_username: "admin"
+      bootstrap_password: ""      # Production: generated bootstrap password
+      api_token: ""               # Optional static fallback; generated 32+ byte token
+      api_token_actor: "bearclaw-web"
+      api_token_role: "admin"
+      api_token_scopes:
+        - "*"
+      api_signing_keys: []        # Preferred: generated 32+ byte HMAC keys
+      api_audience: "ursa-control-plane"
+      api_replay_ttl_seconds: 300
 
   # Pi-hole DNS insight (read-only) — per-client "what is it talking to"
   pihole:
@@ -35,6 +48,7 @@ major:
     step_up_risks:                  # Risk tiers gated when step-up is enabled
       - "high"
       - "critical"
+    approval_signing_key: ""        # Production: generated 32+ byte signing key
 
 minor:
   # Scan defaults

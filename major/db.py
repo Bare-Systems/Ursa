@@ -753,7 +753,7 @@ def _ensure_default_admin_user(db):
         return
     cfg = get_config()
     username = str(cfg.get("major.web.auth.bootstrap_username", "admin")).strip() or "admin"
-    password = str(cfg.get("major.web.auth.bootstrap_password", "change-me-now"))
+    password = str(cfg.get("major.web.auth.bootstrap_password", ""))
     role = str(cfg.get("major.web.auth.bootstrap_role", "admin")).strip().lower() or "admin"
     now = time.time()
     db.execute(

@@ -6,8 +6,10 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Added production-mode config validation and a CI default-secret scan so non-dev deployments fail fast on known development secrets, missing API credentials, or short signing/static tokens.
 - Hardened control-plane API authentication with signed scoped bearer tokens, server-side route permissions, replay/expiry/audience checks, and migration-only static token authority.
 - Replaced the prototype C2 encrypted frame format with versioned AES-256-GCM envelopes for encrypted tasking, results, and beacon uploads; legacy encrypted frames now fail closed and must re-register under the AEAD protocol.
+- Retired the stale local `RESEARCH.md` after preserving it in closed GitHub archive issue #6 and moving unresolved roadmap work to GitHub issues #7-#21 under Secure Foundation, Scale and Storage, Telemetry and SIEM, and Forensics-Grade Minor milestones.
 
 ### Added
 

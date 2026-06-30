@@ -15,4 +15,6 @@ Report vulnerabilities privately with:
 
 - High-risk workflows must stay approval-gated and auditable.
 - Secrets, tokens, payload credentials, and real operator data must never be committed.
+- Non-dev deployments must run with `environment: production` or `URSA_ENV=production`
+  so startup validation rejects development defaults and missing API credentials.
 - Deployment and public-surface changes must update `README.md` and `BLINK.md`.
