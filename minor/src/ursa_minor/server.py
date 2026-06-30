@@ -35,6 +35,7 @@ Tools:
   - check_scope:      Validate a URL against the active engagement scope
   - get_engagement:   Show the active engagement details
   - close_engagement: Close the active engagement
+  - ursa_tool_policies: Show tool risk and approval metadata
   - diff_scan_results: Regression diff — compare two saved scan results, report new/fixed findings
 
 Run with:
@@ -238,6 +239,38 @@ def _auto_save(tool_name: str, result: str, metadata: dict | None = None,
     return out
 
 
+def _enforce_minor_policy(
+    tool_name: str,
+    *,
+    args: dict[str, Any] | None = None,
+    target: str = "",
+    actor: str = "operator",
+    reason: str = "",
+    approval_id: str = "",
+) -> str:
+    """Return an operator-facing policy block message, or an empty string."""
+    from ursa_minor.policy import (
+        classify_tool_policy,
+        enforce_tool_policy,
+        format_policy_block,
+        policy_requires_gate,
+    )
+
+    policy = classify_tool_policy(tool_name, args or {})
+    if not policy_requires_gate(policy):
+        return ""
+
+    decision = enforce_tool_policy(
+        tool_name,
+        args=args,
+        target=target,
+        actor=actor,
+        reason=reason,
+        approval_id=approval_id,
+    )
+    return "" if decision.allowed else format_policy_block(decision)
+
+
 # ── MCP Tools ──
 
 
@@ -309,6 +342,9 @@ def scan_ports(
     quick: bool = False,
     timeout: float = 1.0,
     threads: int = 100,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Scan open ports on a target IP address.
@@ -325,8 +361,28 @@ def scan_ports(
         quick: If True, scan only top 20 ports (fast).
         timeout: Timeout per port in seconds (default 1.0).
         threads: Number of concurrent threads (default 100).
+        policy_actor: Operator or agent requesting approval-gated scans.
+        policy_reason: Justification for approval-gated scans.
+        policy_approval_id: Approval reference for approval-gated scans.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    policy_block = _enforce_minor_policy(
+        "scan_ports",
+        args={
+            "target": target,
+            "ports": ports,
+            "scan_all": scan_all,
+            "quick": quick,
+            "threads": threads,
+        },
+        target=target,
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     if ports:
         port_list: list[int] = []
@@ -398,6 +454,9 @@ def sniff_packets(
     dns_only: bool = False,
     interface: str | None = None,
     timeout: int = 30,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Capture and analyze network packets.
@@ -415,8 +474,28 @@ def sniff_packets(
         dns_only: If True, only capture and report DNS queries.
         interface: Network interface to sniff on (default: auto).
         timeout: Max seconds to capture (default 30). Safety limit.
+        policy_actor: Operator or agent requesting approval.
+        policy_reason: Justification for packet capture.
+        policy_approval_id: Approval reference for packet capture.
     """
     from collections import Counter
+
+    policy_block = _enforce_minor_policy(
+        "sniff_packets",
+        args={
+            "count": count,
+            "filter_expr": filter_expr,
+            "dns_only": dns_only,
+            "interface": interface,
+            "timeout": timeout,
+        },
+        target=interface or filter_expr or "default-interface",
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     count = min(count, 500)
 
@@ -524,6 +603,9 @@ def full_recon(
     target_range: str | None = None,
     quick: bool = True,
     threads: int = 50,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Run full network reconnaissance: discover hosts then scan all their ports.
@@ -539,8 +621,22 @@ def full_recon(
         quick: If True, scan top 20 ports per host (faster).
                 If False, scan top 100 ports (more thorough).
         threads: Threads per host for port scanning (default 50).
+        policy_actor: Operator or agent requesting approval.
+        policy_reason: Justification for full reconnaissance.
+        policy_approval_id: Approval reference for full reconnaissance.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    policy_block = _enforce_minor_policy(
+        "full_recon",
+        args={"target_range": target_range, "quick": quick, "threads": threads},
+        target=target_range or "auto-detect",
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     local_ip = _get_local_ip()
 
@@ -835,6 +931,9 @@ def dirbust(
     crawl: bool = True,
     auth_header: str | None = None,
     cookies: str | None = None,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Discover hidden files and directories on a web server by brute-forcing
@@ -867,11 +966,33 @@ def dirbust(
                      (e.g., "Bearer eyJ..." or "Basic dXNlcjpwYXNz").
         cookies: Cookie string for authenticated scanning
                  (e.g., "session=abc123; csrf=xyz").
+        policy_actor: Operator or agent requesting approval-gated scans.
+        policy_reason: Justification for approval-gated scans.
+        policy_approval_id: Approval reference for approval-gated scans.
     """
     import re as _re
     import urllib.request
     import urllib.error
     import urllib.parse
+
+    policy_block = _enforce_minor_policy(
+        "dirbust",
+        args={
+            "url": url,
+            "extensions": extensions,
+            "threads": threads,
+            "wordlist_file": wordlist_file,
+            "crawl": crawl,
+            "auth_header": auth_header,
+            "cookies": cookies,
+        },
+        target=url,
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ursa-minor/1"
 
@@ -1316,6 +1437,9 @@ def identify_hash(hash_str: str) -> str:
 def generate_reverse_shell(
     payload_type: str = "bash",
     lport: int = 4444,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Generate reverse shell payloads for different languages.
@@ -1328,7 +1452,21 @@ def generate_reverse_shell(
         payload_type: Language/tool for payload. Options: bash, python,
                       nc, php, ruby, perl, powershell, all
         lport: Your listener port (default 4444)
+        policy_actor: Operator or agent requesting approval.
+        policy_reason: Justification for payload generation.
+        policy_approval_id: Approval reference for payload generation.
     """
+    policy_block = _enforce_minor_policy(
+        "generate_reverse_shell",
+        args={"payload_type": payload_type, "lport": lport},
+        target=f"listener:{lport}",
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -1396,6 +1534,9 @@ def credential_spray(
     spray_mode: bool = False,
     threads: int = 5,
     timeout: float = 5.0,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Attempt to brute-force or spray credentials against a service.
@@ -1412,6 +1553,9 @@ def credential_spray(
         spray_mode: If True, try one password across all users (avoids lockouts)
         threads: Concurrent threads (default 5, keep low for SSH)
         timeout: Connection timeout in seconds
+        policy_actor: Operator or agent requesting approval.
+        policy_reason: Justification for credential testing.
+        policy_approval_id: Approval reference for credential testing.
     """
     import ftplib
     import base64
@@ -1419,6 +1563,25 @@ def credential_spray(
     import urllib.error
     from concurrent.futures import ThreadPoolExecutor, as_completed as asc
     import time
+
+    policy_block = _enforce_minor_policy(
+        "credential_spray",
+        args={
+            "service": service,
+            "target": target,
+            "username": username,
+            "password": password,
+            "port": port,
+            "spray_mode": spray_mode,
+            "threads": threads,
+        },
+        target=target,
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     default_users = [
         "admin", "root", "user", "test", "guest", "administrator",
@@ -1528,6 +1691,9 @@ def vuln_scan(
     timeout: float = 10.0,
     auth_header: str | None = None,
     cookies: str | None = None,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Scan a web URL for common vulnerabilities: SQL injection, XSS,
@@ -1550,11 +1716,30 @@ def vuln_scan(
         cookies: Cookie string to send with every request
                  (e.g., "session=abc123; csrf=xyz"). Follows the HTTP
                  Cookie header format.
+        policy_actor: Operator or agent requesting approval-gated scans.
+        policy_reason: Justification for approval-gated scans.
+        policy_approval_id: Approval reference for approval-gated scans.
     """
     import urllib.request
     import urllib.error
     import urllib.parse
     import re
+
+    policy_block = _enforce_minor_policy(
+        "vuln_scan",
+        args={
+            "url": url,
+            "tests": tests,
+            "auth_header": auth_header,
+            "cookies": cookies,
+        },
+        target=url,
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     test_list = [t.strip() for t in tests.split(",")]
     if "all" in test_list:
@@ -2007,6 +2192,9 @@ def snmp_scan(
     brute_force: bool = False,
     walk: bool = False,
     timeout: float = 3.0,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Query a device via SNMP to extract system info, network config,
@@ -2021,7 +2209,26 @@ def snmp_scan(
         brute_force: If True, try common community strings
         walk: If True, do a full SNMP walk (verbose output)
         timeout: Timeout per query in seconds
+        policy_actor: Operator or agent requesting approval-gated scans.
+        policy_reason: Justification for approval-gated scans.
+        policy_approval_id: Approval reference for approval-gated scans.
     """
+    policy_block = _enforce_minor_policy(
+        "snmp_scan",
+        args={
+            "target": target,
+            "community": community,
+            "brute_force": brute_force,
+            "walk": walk,
+        },
+        target=target,
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
+
     def _encode_len(n):
         return bytes([n]) if n < 0x80 else bytes([0x81, n]) if n < 0x100 else bytes([0x82, (n >> 8) & 0xff, n & 0xff])
 
@@ -2518,6 +2725,9 @@ def arp_spoof(
     interface: str | None = None,
     duration: int = 60,
     confirm: bool = False,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Perform ARP spoofing (MITM) between a target and gateway.
@@ -2535,6 +2745,9 @@ def arp_spoof(
         interface: Network interface to use (auto-detected if not specified).
         duration: Spoofing duration in seconds (default 60, max 300).
         confirm: Must be True to proceed — safety check.
+        policy_actor: Operator or agent requesting approval.
+        policy_reason: Justification for ARP spoofing.
+        policy_approval_id: Approval reference for ARP spoofing.
     """
     if not confirm:
         return (
@@ -2542,6 +2755,23 @@ def arp_spoof(
             "Call with confirm=True to proceed.\n"
             "This will intercept traffic between the target and gateway."
         )
+
+    policy_block = _enforce_minor_policy(
+        "arp_spoof",
+        args={
+            "target_ip": target_ip,
+            "gateway_ip": gateway_ip,
+            "interface": interface,
+            "duration": duration,
+            "confirm": confirm,
+        },
+        target=target_ip,
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     if _arp_spoof_state["active"]:
         return "ARP spoof is already running. Use arp_spoof_stop() first."
@@ -3071,6 +3301,36 @@ def close_engagement() -> str:
 
 
 @mcp_server.tool()
+def ursa_tool_policies(risk_level: str = "") -> str:
+    """
+    List Ursa Minor tool risk and approval metadata.
+
+    Args:
+        risk_level: Optional risk filter: low, medium, high, or critical.
+    """
+    from ursa_minor.policy import list_tool_policies
+
+    policies = list_tool_policies(risk_level=risk_level)
+    if not policies:
+        return f"No Ursa Minor tool policies found for risk filter: {risk_level or '(none)'}"
+
+    lines = [
+        "Ursa Minor Tool Policies",
+        f"{'Tool':<24} {'Risk':<9} {'Approval':<9} {'Category':<12} Description",
+        "-" * 92,
+    ]
+    for policy in policies:
+        approval = "yes" if policy.get("approval_required") else "no"
+        destructive = " destructive" if policy.get("destructive") else ""
+        lines.append(
+            f"{policy['tool_name']:<24} {policy['risk_level']:<9} "
+            f"{approval:<9} {policy['category']:<12} "
+            f"{policy['description']}{destructive}"
+        )
+    return "\n".join(lines)
+
+
+@mcp_server.tool()
 def ursa_asset_graph(fact_type: str = "", limit: int = 30) -> str:
     """
     Show the normalized asset graph for the active engagement (Phase 6A).
@@ -3187,6 +3447,9 @@ def api_scan(
     auth_header: str | None = None,
     cookies: str | None = None,
     timeout: float = 10.0,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+    policy_approval_id: str = "",
 ) -> str:
     """
     Discover and test API endpoints using an OpenAPI / Swagger specification.
@@ -3210,11 +3473,30 @@ def api_scan(
         auth_header: Authorization header value (e.g., "Bearer eyJ...")
         cookies: Cookie string (e.g., "session=abc123")
         timeout: Request timeout in seconds (default 10.0)
+        policy_actor: Operator or agent requesting approval.
+        policy_reason: Justification for API scanning.
+        policy_approval_id: Approval reference for API scanning.
     """
     import json as _json
     import urllib.request
     import urllib.error
     import urllib.parse
+
+    policy_block = _enforce_minor_policy(
+        "api_scan",
+        args={
+            "url": url,
+            "spec_path": spec_path,
+            "auth_header": auth_header,
+            "cookies": cookies,
+        },
+        target=url,
+        actor=policy_actor,
+        reason=policy_reason,
+        approval_id=policy_approval_id,
+    )
+    if policy_block:
+        return policy_block
 
     _UA = "ursa-minor/1 api-scan"
 

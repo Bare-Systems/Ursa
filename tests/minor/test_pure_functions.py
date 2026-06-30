@@ -1,5 +1,8 @@
 """Tests for Ursa Minor pure utility functions (no network I/O)."""
 
+import pytest
+
+import ursa_minor.policy as policy_mod
 from ursa_minor.server import (
     _calculate_cidr,
     _lookup_vendor,
@@ -7,6 +10,12 @@ from ursa_minor.server import (
     identify_hash,
     lookup_service,
 )
+
+
+@pytest.fixture(autouse=True)
+def policy_audit_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(policy_mod, "DEFAULT_AUDIT_DIR", tmp_path / "audit")
+    monkeypatch.setattr(policy_mod, "_active_engagement", lambda: None)
 
 
 class TestCalculateCidr:
@@ -76,23 +85,28 @@ class TestIdentifyHash:
 
 
 class TestGenerateReverseShell:
+    _approval = {
+        "policy_actor": "pytest",
+        "policy_reason": "unit test approved payload generation",
+        "policy_approval_id": "APP-test",
+    }
 
     def test_bash_payload(self):
-        result = generate_reverse_shell(payload_type="bash", lport=9999)
+        result = generate_reverse_shell(payload_type="bash", lport=9999, **self._approval)
         assert "/dev/tcp/" in result
         assert "9999" in result
 
     def test_python_payload(self):
-        result = generate_reverse_shell(payload_type="python", lport=5555)
+        result = generate_reverse_shell(payload_type="python", lport=5555, **self._approval)
         assert "socket" in result
         assert "5555" in result
 
     def test_all_payloads(self):
-        result = generate_reverse_shell(payload_type="all", lport=4444)
+        result = generate_reverse_shell(payload_type="all", lport=4444, **self._approval)
         # Should contain multiple payload types
         assert "bash" in result.lower()
         assert "python" in result.lower()
 
     def test_unknown_type(self):
-        result = generate_reverse_shell(payload_type="invalid_lang", lport=4444)
+        result = generate_reverse_shell(payload_type="invalid_lang", lport=4444, **self._approval)
         assert result  # Should handle gracefully

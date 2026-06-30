@@ -6,6 +6,7 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Gated high-risk Ursa Minor MCP tools behind local policy approval metadata, with machine-readable tool risk metadata and JSONL audit records for decisions.
 - Reduced the default pytest suite runtime by caching repeated post-exploitation smoke checks, using deterministic aggregate loot inputs, and tightening C2 test-server teardown polling.
 - Added production-mode config validation and a CI default-secret scan so non-dev deployments fail fast on known development secrets, missing API credentials, or short signing/static tokens.
 - Hardened control-plane API authentication with signed scoped bearer tokens, server-side route permissions, replay/expiry/audience checks, and migration-only static token authority.

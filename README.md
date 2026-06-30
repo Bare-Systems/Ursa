@@ -41,6 +41,7 @@ Ursa is a modern red-team toolkit built for the way operators actually work toda
 
 - **AI-operable by design** through MCP servers for both C2 and recon.
 - **Operator-centric workflows** with campaign context, approvals, and shift handoff support.
+- **Approval-gated high-risk tooling** in Ursa Minor for payload generation, packet capture, credential testing, active injection checks, and disruptive network actions.
 - **Practical tradecraft coverage** across discovery, access support, execution, collection, and post-exploitation modules.
 - **High leverage for small teams** by combining automation and human oversight.
 
@@ -286,6 +287,11 @@ Ursa Minor includes 20 reconnaissance, scanning, and lightweight host-triage too
 - OS fingerprinting, SMB enumeration, SNMP scanning
 - Hash cracking/identification and reverse shell payload generation
 - Defensive persistence scanning, host baselining, and drift triage
+
+High-risk Ursa Minor MCP actions require `policy_actor`, `policy_reason`, and
+`policy_approval_id` metadata and append local audit records to
+`~/.ursa/audit/minor_policy.jsonl`. Use `ursa_tool_policies` to inspect the
+tool risk matrix.
 
 Use via MCP, package CLI, or standalone scripts.
 

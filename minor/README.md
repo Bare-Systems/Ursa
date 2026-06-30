@@ -28,6 +28,7 @@ Ursa Minor provides 20 tools across network reconnaissance, vulnerability scanni
 | `create_baseline` | Save a defensive baseline snapshot of persistence, users, and listening ports |
 | `baseline_diff` | Compare current host state against a saved baseline and report drift |
 | `triage_host` | Run a lightweight host triage workflow with optional baseline comparison |
+| `ursa_tool_policies` | Show tool risk levels, approval requirements, and policy metadata |
 
 ## Usage
 
@@ -75,6 +76,22 @@ python3 minor/revshell.py                          # Generate reverse shells
 Most tools require `sudo` because they use raw sockets (ARP, ICMP, TCP SYN probes). Tools that only make standard TCP connections or HTTP requests (hash cracking, reverse shell generation, directory busting) do not require elevated privileges.
 
 The defensive triage tools do not require `sudo` when scanning an offline filesystem root. On a live host, elevated privileges may improve visibility into listening ports and system-wide persistence locations.
+
+## Policy Gates and Audit
+
+Ursa Minor keeps normal read-only enumeration available, but high-risk MCP
+actions require explicit approval metadata before execution. Gated actions
+include packet capture, full network reconnaissance, full port sweeps,
+authenticated directory discovery, active injection scans, API schema probing,
+reverse-shell payload generation, credential spraying, SNMP brute-force/walk,
+and ARP spoofing.
+
+Pass `policy_actor`, `policy_reason`, and `policy_approval_id` to proceed with
+an approval-gated tool. Destructive tools also respect the active engagement's
+`allow_destructive` setting when an engagement is active. Each policy decision
+is appended to `~/.ursa/audit/minor_policy.jsonl` with actor, target,
+justification, risk level, and policy result. Use `ursa_tool_policies` to list
+the machine-readable risk metadata exposed by the MCP server.
 
 ## Dependencies
 
