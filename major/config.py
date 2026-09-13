@@ -313,6 +313,29 @@ def validate_config(config: UrsaConfig, *, production: bool | None = None) -> No
     for path, token in api_tokens:
         errors.extend(_secret_errors(path, token, min_length=32))
 
+    governance_mode = str(
+        config.get("major.governance.bearclaw_mode", "local")
+    ).strip().lower()
+    if governance_mode != "local":
+        errors.append("major.governance.bearclaw_mode must be local in production")
+
+    if config.get("major.governance.require_step_up_approval", False) is not True:
+        errors.append(
+            "major.governance.require_step_up_approval must be enabled in production"
+        )
+
+    raw_step_up_risks = config.get("major.governance.step_up_risks", []) or []
+    if isinstance(raw_step_up_risks, str):
+        raw_step_up_risks = [raw_step_up_risks]
+    configured_step_up_risks = {
+        str(risk).strip().lower() for risk in raw_step_up_risks
+    }
+    missing_step_up_risks = {"high", "critical"} - configured_step_up_risks
+    if missing_step_up_risks:
+        errors.append(
+            "major.governance.step_up_risks must include high and critical in production"
+        )
+
     if errors:
         raise ConfigValidationError(errors)
 

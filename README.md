@@ -145,6 +145,10 @@ Development defaults are for local use only. Before any non-local deployment,
 set `environment: production` in `ursa.yaml` or export `URSA_ENV=production`,
 then configure generated secrets for the control plane and governance signing.
 Production mode refuses to start with known development defaults.
+It also refuses to start when governance is disabled, step-up approval is off,
+or the high/critical risk tiers are missing from the approval gate. The Blink
+provisioner forces production mode, generates a non-default bootstrap password,
+and enables high-risk step-up approval on every deployment.
 
 ## Blink Homelab Contract
 

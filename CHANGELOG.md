@@ -6,6 +6,12 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Made network-published Blink deployments fail closed: provisioning now forces
+  production mode, uses a restrictive umask, replaces the known bootstrap
+  password, and enables high-risk step-up approvals. Production validation now
+  rejects disabled governance, disabled step-up approval, or missing high and
+  critical approval tiers. Fixed the Blink ignore rule so its deployment bundle
+  and contract test are versioned and reviewable.
 - Gated high-risk Ursa Minor MCP tools behind local policy approval metadata, with machine-readable tool risk metadata and JSONL audit records for decisions.
 - Reduced the default pytest suite runtime by caching repeated post-exploitation smoke checks, using deterministic aggregate loot inputs, and tightening C2 test-server teardown polling.
 - Added production-mode config validation and a CI default-secret scan so non-dev deployments fail fast on known development secrets, missing API credentials, or short signing/static tokens.

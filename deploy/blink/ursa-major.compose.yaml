@@ -1,0 +1,66 @@
+services:
+  c2:
+    image: ${URSA_IMAGE_NAME:-ursa-major:local}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command:
+      - /usr/local/bin/python3
+      - /app/major/server.py
+      - --config
+      - /config/ursa.yaml
+    container_name: ursa-major-c2
+    restart: unless-stopped
+    ports:
+      - "${URSA_PUBLISH_HOST:-127.0.0.1}:${URSA_C2_PORT:-6708}:${URSA_C2_PORT:-6708}"
+    volumes:
+      - type: bind
+        source: ${URSA_RUNTIME_DIR}/config
+        target: /config
+        read_only: true
+      - type: bind
+        source: ${URSA_RUNTIME_DIR}/data
+        target: /data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request,ssl; ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; urllib.request.urlopen('https://127.0.0.1:6708/health', context=ctx)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  cp:
+    image: ${URSA_IMAGE_NAME:-ursa-major:local}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command:
+      - /usr/local/bin/python3
+      - -m
+      - major.web
+      - --config
+      - /config/ursa.yaml
+    container_name: ursa-major-cp
+    restart: unless-stopped
+    depends_on:
+      c2:
+        condition: service_started
+    ports:
+      - "${URSA_PUBLISH_HOST:-127.0.0.1}:${URSA_CP_PORT:-6707}:${URSA_CP_PORT:-6707}"
+    volumes:
+      - type: bind
+        source: ${URSA_RUNTIME_DIR}/config
+        target: /config
+        read_only: true
+      - type: bind
+        source: ${URSA_RUNTIME_DIR}/data
+        target: /data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6707/healthz')"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
