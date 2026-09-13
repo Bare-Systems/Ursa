@@ -6,7 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "ursa-minor"
 version = "0.1.0"
 description = "Ursa Minor — Recon & Scanning Toolkit"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+]
 dependencies = [
     "scapy>=2.5.0",
     "mcp[cli]>=1.0.0",

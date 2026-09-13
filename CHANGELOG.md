@@ -6,6 +6,8 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Corrected the Apache License 2.0 copyright notice and declared Apache-2.0
+  consistently in the Ursa and Ursa Minor package metadata.
 - Closed Ursa Major governance bypasses: approved tasks are now bound to their
   exact session, task type, arguments, action, and risk level and are consumed
   after one queue operation; unknown shell commands default to high risk;
