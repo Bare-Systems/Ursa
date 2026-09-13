@@ -6,6 +6,8 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Updated both Ursa MCP servers to the MCP Python SDK 2.2 API and aligned the
+  root, Ursa Minor, CI, and lockfile dependency constraints on MCP 2.2.
 - Corrected the Apache License 2.0 copyright notice and declared Apache-2.0
   consistently in the Ursa and Ursa Minor package metadata.
 - Closed Ursa Major governance bypasses: approved tasks are now bound to their

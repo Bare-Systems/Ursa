@@ -78,7 +78,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 # Add project root and minor package to path
 PROJECT_ROOT = Path(__file__).parent
@@ -138,7 +138,7 @@ from major.pihole import (  # noqa: E402
 from implants.builder import Builder as _PayloadBuilder  # noqa: E402
 from implants.builder import PayloadConfig, auto_c2_url  # noqa: E402
 
-mcp_server = FastMCP(
+mcp_server = MCPServer(
     "ursa",
     instructions="""Ursa — Command & Control operator interface.
     You have tools to manage implant sessions, issue commands to compromised
@@ -3482,12 +3482,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.transport == "streamable-http":
-        # FastMCP reads these values when building the HTTP app.
-        mcp_server.settings.host = args.host
-        mcp_server.settings.port = args.port
-        mcp_server.settings.streamable_http_path = args.streamable_http_path
         print("  URSA MAJOR — MCP (streamable HTTP)")
         print(f"  http://{args.host}:{args.port}{args.streamable_http_path}")
         print()
-
-    mcp_server.run(transport=args.transport)
+        mcp_server.run(
+            transport="streamable-http",
+            host=args.host,
+            port=args.port,
+            streamable_http_path=args.streamable_http_path,
+        )
+    else:
+        mcp_server.run()

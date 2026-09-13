@@ -51,9 +51,9 @@ from datetime import datetime
 from typing import Any
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 except ImportError:  # pragma: no cover - test fallback when MCP is absent
-    class FastMCP:  # type: ignore[no-redef]
+    class MCPServer:  # type: ignore[no-redef]
         def __init__(self, *_args, **_kwargs):
             pass
 
@@ -87,7 +87,7 @@ except ImportError:  # pragma: no cover - test fallback when Scapy is absent
     srp = scapy_sniff = sr1 = _missing_scapy
     conf = _DummyConf()  # type: ignore[assignment]
 
-mcp_server = FastMCP(
+mcp_server = MCPServer(
     "ursa-minor",
     instructions="""Ursa Minor — the recon & scanning component of the Ursa framework.
     You have access to network reconnaissance, vulnerability scanning, credential
