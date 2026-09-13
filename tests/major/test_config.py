@@ -53,6 +53,7 @@ major:
       api_signing_keys:
         - "rotate-this-32-byte-signing-secret"
   governance:
+    require_step_up_approval: true
     approval_signing_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 """,
             )
@@ -76,6 +77,7 @@ major:
       api_signing_keys:
         - "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
   governance:
+    require_step_up_approval: true
     approval_signing_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 """,
         )
@@ -106,3 +108,33 @@ major:
         )
 
     assert "major.web.auth.api_token" in str(exc_info.value)
+
+
+def test_production_mode_rejects_disabled_governance(tmp_path, monkeypatch):
+    monkeypatch.setenv("URSA_ENV", "production")
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        load_config(
+            path=_write_config(
+                tmp_path / "ursa.yaml",
+                """
+major:
+  web:
+    auth:
+      session_secret: "ssssssssssssssssssssssssssssssss"
+      bootstrap_password: "not-default-anymore"
+      api_signing_keys:
+        - "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+  governance:
+    bearclaw_mode: disabled
+    require_step_up_approval: false
+    step_up_risks: [high]
+    approval_signing_key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+""",
+            )
+        )
+
+    message = str(exc_info.value)
+    assert "bearclaw_mode must be local" in message
+    assert "require_step_up_approval must be enabled" in message
+    assert "step_up_risks must include high and critical" in message

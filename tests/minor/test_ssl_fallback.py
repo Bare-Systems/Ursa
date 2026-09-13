@@ -22,6 +22,21 @@ import ssl
 import urllib.error
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_policy(tmp_path, monkeypatch):
+    import ursa_minor.policy as policy
+
+    monkeypatch.setattr(policy, "DEFAULT_AUDIT_DIR", tmp_path / "audit")
+    monkeypatch.setattr(
+        policy,
+        "_scope_check",
+        lambda _target: {"in_scope": True, "reason": "unit-test scope"},
+    )
+
+
 # Headers a self-signed-cert target serves (all present server-side).
 _SELF_SIGNED_HEADERS = {
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",

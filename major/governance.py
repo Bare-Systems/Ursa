@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -12,6 +13,7 @@ from typing import Any
 from major.config import get_config
 from major.db import (
     append_immutable_audit_event,
+    consume_approval_request,
     create_approval_request,
     create_task,
     evaluate_campaign_policy_alerts,
@@ -65,6 +67,7 @@ class PolicyDecision:
     policy_result: str
     reason: str
     policy_path: str = "bearclaw/local"
+    uses_approval: bool = False
 
 
 def _classify_shell_risk(command: str) -> str:
@@ -75,7 +78,13 @@ def _classify_shell_risk(command: str) -> str:
         return "high"
     if len(cmd) > 140:
         return "high"
-    return "medium"
+    if re.fullmatch(
+        r"(?:whoami|id|hostname|pwd|env|uname(?:\s+-[a-z]+)?|"
+        r"ps(?:\s+-[a-z]+)?|ls(?:\s+-[a-z]+)?(?:\s+[a-z0-9_./-]+)?)",
+        cmd,
+    ):
+        return "medium"
+    return "high"
 
 
 def classify_task_risk(task_type: str, args: dict[str, Any] | None = None) -> str:
@@ -83,6 +92,17 @@ def classify_task_risk(task_type: str, args: dict[str, Any] | None = None) -> st
     args = args or {}
     if task == "shell":
         return _classify_shell_risk(str(args.get("command", "")))
+    if task == "post":
+        module = str(args.get("module", "")).strip().lower()
+        if not re.fullmatch(r"(?:enum|cred|persist|lateral)/[a-z0-9_]+", module):
+            return "high"
+        if module.startswith("enum/"):
+            return "medium"
+        if module.startswith(("persist/", "lateral/")):
+            return "critical"
+        if module.startswith("cred/"):
+            return "high"
+        return "high"
     return RISK_MATRIX.get(task, "high")
 
 
@@ -93,6 +113,7 @@ def enforce_bearclaw_policy(
     args: dict[str, Any] | None,
     actor: str,
     approval_id: str | None = None,
+    session_id: str | None = None,
 ) -> PolicyDecision:
     """Policy decision point aligned to the BearClaw path."""
     cfg = get_config()
@@ -147,6 +168,50 @@ def enforce_bearclaw_policy(
                 policy_result="deny",
                 reason=f"Approval {approval_id} does not match task type {task_type}.",
             )
+        if approval.get("action") != action:
+            return PolicyDecision(
+                allowed=False,
+                requires_approval=False,
+                risk_level=risk_level,
+                policy_result="deny",
+                reason=f"Approval {approval_id} does not match action {action}.",
+            )
+        if approval.get("session_id") != session_id:
+            return PolicyDecision(
+                allowed=False,
+                requires_approval=False,
+                risk_level=risk_level,
+                policy_result="deny",
+                reason=f"Approval {approval_id} does not match session {session_id}.",
+            )
+        try:
+            approved_args = json.loads(approval.get("args") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            approved_args = None
+        if approved_args != args:
+            return PolicyDecision(
+                allowed=False,
+                requires_approval=False,
+                risk_level=risk_level,
+                policy_result="deny",
+                reason=f"Approval {approval_id} does not match the approved arguments.",
+            )
+        if approval.get("risk_level") != risk_level:
+            return PolicyDecision(
+                allowed=False,
+                requires_approval=False,
+                risk_level=risk_level,
+                policy_result="deny",
+                reason=f"Approval {approval_id} does not match risk level {risk_level}.",
+            )
+        return PolicyDecision(
+            allowed=True,
+            requires_approval=False,
+            risk_level=risk_level,
+            policy_result="allow",
+            reason=f"Allowed by BearClaw local policy ({risk_level} risk).",
+            uses_approval=True,
+        )
 
     return PolicyDecision(
         allowed=True,
@@ -173,6 +238,7 @@ def queue_task_with_policy(
         args=task_args,
         actor=actor,
         approval_id=approval_id,
+        session_id=session_id,
     )
 
     audit_details = {
@@ -228,6 +294,23 @@ def queue_task_with_policy(
             "message": decision.reason,
         }
 
+    if decision.uses_approval and approval_id and not consume_approval_request(approval_id):
+        message = f"Approval {approval_id} was already consumed."
+        append_immutable_audit_event(
+            actor=actor,
+            action="queue_task",
+            session_id=session_id,
+            approval_id=approval_id,
+            risk_level=decision.risk_level,
+            policy_result="deny",
+            details={**audit_details, "status": "denied", "reason": message},
+        )
+        return {
+            "status": "denied",
+            "risk_level": decision.risk_level,
+            "message": message,
+        }
+
     task_id = create_task(session_id, task_type, task_args)
     append_immutable_audit_event(
         actor=actor,
@@ -251,8 +334,11 @@ def format_risk_matrix() -> str:
     """Text table of policy risk mapping for operator visibility."""
     rows = ["TASK TYPE      RISK", "-------------------"]
     for task_type in sorted(RISK_MATRIX):
+        if task_type == "shell":
+            continue
         rows.append(f"{task_type:<13} {RISK_MATRIX[task_type]}")
-    rows.append("shell         command-dependent (medium/high/critical)")
+    rows.append("post          module-dependent (medium/high/critical)")
+    rows.append("shell         allowlist-based (medium/high/critical)")
     return "\n".join(rows)
 
 

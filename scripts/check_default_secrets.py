@@ -16,8 +16,12 @@ DEFAULT_SECRET_MARKERS = {
 }
 
 ALLOWLIST = {
+    # These files intentionally contain the markers in order to replace or
+    # regression-test them; neither file configures a runtime secret.
+    "deploy/blink/provision_ursa_major.sh",
     "major/config.py",
     "tests/major/test_config.py",
+    "tests/test_blink_deploy.py",
     "scripts/check_default_secrets.py",
 }
 

@@ -145,6 +145,10 @@ Development defaults are for local use only. Before any non-local deployment,
 set `environment: production` in `ursa.yaml` or export `URSA_ENV=production`,
 then configure generated secrets for the control plane and governance signing.
 Production mode refuses to start with known development defaults.
+It also refuses to start when governance is disabled, step-up approval is off,
+or the high/critical risk tiers are missing from the approval gate. The Blink
+provisioner forces production mode, generates a non-default bootstrap password,
+and enables high-risk step-up approval on every deployment.
 
 ## Blink Homelab Contract
 
@@ -289,9 +293,11 @@ Ursa Minor includes 20 reconnaissance, scanning, and lightweight host-triage too
 - Defensive persistence scanning, host baselining, and drift triage
 
 High-risk Ursa Minor MCP actions require `policy_actor`, `policy_reason`, and
-`policy_approval_id` metadata and append local audit records to
+an operator-issued signed `policy_approval_id` (`ursa approval init`, then
+`ursa approval issue`) and append local audit records to
 `~/.ursa/audit/minor_policy.jsonl`. Use `ursa_tool_policies` to inspect the
-tool risk matrix.
+tool risk matrix. Targeted MCP tools also require an active engagement and
+fail closed when a URL, hostname, IP address, or CIDR is outside its scope.
 
 Use via MCP, package CLI, or standalone scripts.
 
@@ -318,7 +324,8 @@ For implementation and usage details: **[implants/README.md](implants/README.md)
 
 Ursa goes beyond task execution by including operational safeguards:
 
-- **Step-up approval workflow** for high-risk operations
+- **Single-use step-up approvals** bound to the exact session, task, arguments,
+  and risk level for high-risk operations
 - **Policy matrix and threshold alerts**
 - **Cryptographically chained audit records**
 - **Campaign-level grouping, notes, timelines, and handoff reports**

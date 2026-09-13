@@ -53,7 +53,6 @@ from major.crypto import (
 from major.db import (
     complete_task,
     create_session,
-    create_task,
     get_file,
     get_pending_tasks,
     get_session,
@@ -66,6 +65,7 @@ from major.db import (
     update_session_checkin,
     update_session_info,
 )
+from major.governance import queue_task_with_policy
 from major.profiles import TrafficProfile, get_profile
 from major.redirector import redirector_from_config
 
@@ -255,6 +255,9 @@ def _queue_auto_recon(session_id: str) -> list:
             root = _Path(__file__).parent.parent
             base_src = (root / "post" / "base.py").read_text()
             register_stub = "\n# loader stub\ndef register(cls):\n    return cls\n\n"
+            if not _re.fullmatch(r"(?:enum|cred|persist|lateral)/[a-z0-9_]+", module):
+                _log(f"[auto-recon] Invalid module name, skipping: {module}")
+                continue
             rel_parts = module.split("/")
             module_file = root.joinpath("post", *rel_parts).with_suffix(".py")
             if not module_file.exists():
@@ -273,12 +276,19 @@ def _queue_auto_recon(session_id: str) -> list:
             _log(f"[auto-recon] Bundle error for {module}: {exc}")
             continue
 
-        task_id = create_task(
+        decision = queue_task_with_policy(
             session_id=session_id,
             task_type="post",
             args={"code": code_b64, "module": module, "args": {}},
+            actor="system:auto_recon",
         )
-        task_ids.append(task_id)
+        if decision["status"] == "queued":
+            task_ids.append(decision["task_id"])
+        else:
+            _log(
+                f"[auto-recon] Governance {decision['status']} for {module}: "
+                f"{decision['message']}"
+            )
 
     if task_ids:
         _log(f"[auto-recon] Queued {len(task_ids)} module(s) for {session_id}: "

@@ -6,6 +6,30 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Updated both Ursa MCP servers to the MCP Python SDK 2.2 API and aligned the
+  root, Ursa Minor, CI, and lockfile dependency constraints on MCP 2.2.
+- Corrected the Apache License 2.0 copyright notice and declared Apache-2.0
+  consistently in the Ursa and Ursa Minor package metadata.
+- Closed Ursa Major governance bypasses: approved tasks are now bound to their
+  exact session, task type, arguments, action, and risk level and are consumed
+  after one queue operation; unknown shell commands default to high risk;
+  auto-recon uses governed tasking; local post execution is limited to
+  read-only `enum/*`; and post-module path traversal is rejected.
+- Replaced Ursa Minor's trust-on-string high-risk approvals with short-lived,
+  HMAC-signed, single-use capability tokens issued outside MCP via
+  `ursa approval issue`. Tokens are bound to tool, target, actor, reason, and a
+  risk ceiling; raw tokens are excluded from audit records and replayed,
+  expired, tampered, mismatched, or weak-key approvals fail closed.
+- Made Ursa Minor MCP target enforcement fail closed. Network and web tools now
+  require an active engagement, consistently audit low/medium as well as
+  high-risk decisions, accept URL/host/IP/CIDR targets, enforce URL path
+  boundaries, and reject requested networks broader than the authorized CIDR.
+- Made network-published Blink deployments fail closed: provisioning now forces
+  production mode, uses a restrictive umask, replaces the known bootstrap
+  password, and enables high-risk step-up approvals. Production validation now
+  rejects disabled governance, disabled step-up approval, or missing high and
+  critical approval tiers. Fixed the Blink ignore rule so its deployment bundle
+  and contract test are versioned and reviewable.
 - Gated high-risk Ursa Minor MCP tools behind local policy approval metadata, with machine-readable tool risk metadata and JSONL audit records for decisions.
 - Reduced the default pytest suite runtime by caching repeated post-exploitation smoke checks, using deterministic aggregate loot inputs, and tightening C2 test-server teardown polling.
 - Added production-mode config validation and a CI default-secret scan so non-dev deployments fail fast on known development secrets, missing API credentials, or short signing/static tokens.

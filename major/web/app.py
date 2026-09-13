@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import Receive, Scope, Send
 
 from major.config import get_config
@@ -174,7 +175,7 @@ from server import mcp_server as operator_mcp_server  # noqa: E402
 
 
 class ControlPlaneMCPProxy:
-    """Forward `/mcp` requests to the current FastMCP ASGI app."""
+    """Forward `/mcp` requests to the current MCPServer ASGI app."""
 
     def __init__(self, parent_app: FastAPI):
         self.parent_app = parent_app
@@ -196,12 +197,15 @@ CONTROL_PLANE_MCP_APP = ControlPlaneMCPProxy(app)
 
 @asynccontextmanager
 async def control_plane_lifespan(_app):
-    # FastMCP's session manager is single-use, so the embedded control plane
+    # MCPServer's session manager is single-use, so the embedded control plane
     # rebuilds a fresh ASGI app for each startup/lifespan cycle.
-    operator_mcp_server.settings.streamable_http_path = "/mcp"
-    operator_mcp_server.settings.transport_security = None
-    operator_mcp_server._session_manager = None
-    _app.state.control_plane_mcp_app = operator_mcp_server.streamable_http_app()
+    # Major's authentication middleware protects this route, so MCP's standalone
+    # host/origin checks are intentionally disabled for reverse-proxy deployments.
+    transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    _app.state.control_plane_mcp_app = operator_mcp_server.streamable_http_app(
+        streamable_http_path="/mcp",
+        transport_security=transport_security,
+    )
     async with operator_mcp_server.session_manager.run():
         yield
     _app.state.control_plane_mcp_app = None

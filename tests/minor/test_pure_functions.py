@@ -2,6 +2,7 @@
 
 import pytest
 
+import ursa_minor.approval as approval_mod
 import ursa_minor.policy as policy_mod
 from ursa_minor.server import (
     _calculate_cidr,
@@ -16,6 +17,11 @@ from ursa_minor.server import (
 def policy_audit_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(policy_mod, "DEFAULT_AUDIT_DIR", tmp_path / "audit")
     monkeypatch.setattr(policy_mod, "_active_engagement", lambda: None)
+    monkeypatch.setattr(
+        approval_mod,
+        "verify_approval",
+        lambda *_args, **_kwargs: ({"jti": "pure-function-test"}, ""),
+    )
 
 
 class TestCalculateCidr:

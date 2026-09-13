@@ -41,9 +41,8 @@ PLAN*.md
 ISSUES.md
 RESEARCH.md
 
-/blink/
+/blink
 blink.lock
-blink
 .blink/
 /blink.toml
 /BLINK.md
