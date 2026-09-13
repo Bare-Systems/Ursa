@@ -4,13 +4,20 @@ import json
 
 import pytest
 
+import ursa_minor.approval as approval_mod
 import ursa_minor.policy as policy_mod
 
 
 @pytest.fixture(autouse=True)
 def audit_dir(tmp_path, monkeypatch):
     audit_dir = tmp_path / "audit"
+    approval_dir = tmp_path / "approvals"
     monkeypatch.setattr(policy_mod, "DEFAULT_AUDIT_DIR", audit_dir)
+    monkeypatch.setattr(approval_mod, "APPROVAL_DIR", approval_dir)
+    monkeypatch.setattr(approval_mod, "APPROVAL_KEY_FILE", approval_dir / "minor.key")
+    monkeypatch.setattr(approval_mod, "APPROVAL_USE_FILE", approval_dir / "used.jsonl")
+    monkeypatch.delenv("URSA_MINOR_APPROVAL_KEY", raising=False)
+    approval_mod.initialize_approval_key()
     monkeypatch.setattr(policy_mod, "_active_engagement", lambda: None)
     monkeypatch.setattr(policy_mod, "_scope_check", lambda _target: None)
     return audit_dir
@@ -21,6 +28,16 @@ def _audit_records(audit_dir):
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _approval(*, tool_name, target, actor, reason, risk_level):
+    return approval_mod.issue_approval(
+        tool_name=tool_name,
+        target=target,
+        actor=actor,
+        reason=reason,
+        risk_level=risk_level,
+    )
 
 
 def test_high_risk_tools_have_machine_readable_metadata():
@@ -115,6 +132,29 @@ def test_high_risk_tool_requires_approval(audit_dir):
 
 
 def test_high_risk_tool_with_approval_and_reason_is_allowed():
+    token = _approval(
+        tool_name="generate_reverse_shell",
+        target="listener:4444",
+        actor="alice",
+        reason="authorized payload lab",
+        risk_level="high",
+    )
+    decision = policy_mod.enforce_tool_policy(
+        "generate_reverse_shell",
+        args={"payload_type": "bash", "lport": 4444},
+        target="listener:4444",
+        actor="alice",
+        approval_id=token,
+        reason="authorized payload lab",
+    )
+
+    assert decision.allowed is True
+    assert decision.policy_result == "allow"
+    assert "signed approval" in decision.reason
+    assert decision.approval_id and not decision.approval_id.startswith("ursa-minor")
+
+
+def test_plain_approval_reference_is_rejected():
     decision = policy_mod.enforce_tool_policy(
         "generate_reverse_shell",
         args={"payload_type": "bash", "lport": 4444},
@@ -124,9 +164,10 @@ def test_high_risk_tool_with_approval_and_reason_is_allowed():
         reason="authorized payload lab",
     )
 
-    assert decision.allowed is True
-    assert decision.policy_result == "allow"
-    assert "APP-123" in decision.reason
+    assert decision.allowed is False
+    assert decision.policy_result == "deny"
+    assert "format" in decision.reason.lower()
+    assert decision.approval_id == ""
 
 
 def test_approved_high_risk_tool_without_reason_is_denied(audit_dir):

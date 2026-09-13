@@ -91,12 +91,28 @@ authenticated directory discovery, active injection scans, API schema probing,
 reverse-shell payload generation, credential spraying, SNMP brute-force/walk,
 and ARP spoofing.
 
-Pass `policy_actor`, `policy_reason`, and `policy_approval_id` to proceed with
-an approval-gated tool. Destructive tools also require the active engagement's
-`allow_destructive` setting. Each policy decision
+Initialize the operator-only signing boundary once, then issue an approval
+outside the MCP session. Tokens are HMAC-signed, expire within at most one
+hour, are single-use, and are bound to the exact tool, target, actor, reason,
+and approved risk ceiling:
+
+```bash
+ursa approval init
+ursa approval issue \
+  --tool full_recon \
+  --target 192.168.50.0/24 \
+  --actor alice \
+  --reason "authorized lab recon" \
+  --args-json '{"target_range":"192.168.50.0/24","quick":true}'
+```
+
+Pass the returned token as `policy_approval_id`, with the exact same
+`policy_actor` and `policy_reason`. Destructive tools also require the active
+engagement's `allow_destructive` setting. Each policy decision
 is appended to `~/.ursa/audit/minor_policy.jsonl` with actor, target,
-justification, risk level, and policy result. Use `ursa_tool_policies` to list
-the machine-readable risk metadata exposed by the MCP server.
+justification, risk level, and policy result; raw approval tokens are never
+recorded. Use `ursa_tool_policies` to list the machine-readable risk metadata
+exposed by the MCP server.
 
 ## Dependencies
 

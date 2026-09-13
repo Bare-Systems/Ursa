@@ -373,7 +373,8 @@ def evaluate_tool_policy(
     policy = classify_tool_policy(tool_name, raw_args)
     actor = actor.strip() or "operator"
     reason = reason.strip()
-    approval_id = approval_id.strip()
+    approval_token = approval_id.strip()
+    approval_id = ""
     target = _target_from_args(policy, raw_args, target)
 
     allowed = True
@@ -393,7 +394,7 @@ def evaluate_tool_policy(
             policy_result = "deny"
             decision_reason = "Active engagement does not approve destructive Ursa Minor tools."
         elif policy_requires_gate(policy):
-            if not approval_id:
+            if not approval_token:
                 allowed = False
                 requires_approval = True
                 policy_result = "approval_required"
@@ -406,10 +407,27 @@ def evaluate_tool_policy(
                 policy_result = "deny"
                 decision_reason = "Approved high-risk Ursa Minor tools require a justification reason."
             else:
-                decision_reason = (
-                    f"Allowed by approval {approval_id} for {policy.risk_level}-risk "
-                    f"Ursa Minor tool {tool_name}."
+                from ursa_minor.approval import verify_approval
+
+                approval, approval_error = verify_approval(
+                    approval_token,
+                    tool_name=tool_name,
+                    target=target,
+                    actor=actor,
+                    reason=reason,
+                    risk_level=policy.risk_level,
                 )
+                if approval is None:
+                    allowed = False
+                    policy_result = "deny"
+                    decision_reason = approval_error
+                    approval_id = ""
+                else:
+                    approval_id = str(approval["jti"])
+                    decision_reason = (
+                        f"Allowed by signed approval {approval_id} for "
+                        f"{policy.risk_level}-risk Ursa Minor tool {tool_name}."
+                    )
 
     return ToolPolicyDecision(
         tool_name=tool_name,
@@ -474,5 +492,8 @@ def format_policy_block(decision: ToolPolicyDecision) -> str:
     ]
     if decision.requires_approval:
         lines.append("")
-        lines.append("Provide policy_approval_id and policy_reason to proceed.")
+        lines.append(
+            "Provide a signed policy_approval_id from `ursa approval issue` "
+            "and the matching policy_reason."
+        )
     return "\n".join(lines)

@@ -6,6 +6,11 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Replaced Ursa Minor's trust-on-string high-risk approvals with short-lived,
+  HMAC-signed, single-use capability tokens issued outside MCP via
+  `ursa approval issue`. Tokens are bound to tool, target, actor, reason, and a
+  risk ceiling; raw tokens are excluded from audit records and replayed,
+  expired, tampered, mismatched, or weak-key approvals fail closed.
 - Made Ursa Minor MCP target enforcement fail closed. Network and web tools now
   require an active engagement, consistently audit low/medium as well as
   high-risk decisions, accept URL/host/IP/CIDR targets, enforce URL path

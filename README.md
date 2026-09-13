@@ -293,7 +293,8 @@ Ursa Minor includes 20 reconnaissance, scanning, and lightweight host-triage too
 - Defensive persistence scanning, host baselining, and drift triage
 
 High-risk Ursa Minor MCP actions require `policy_actor`, `policy_reason`, and
-`policy_approval_id` metadata and append local audit records to
+an operator-issued signed `policy_approval_id` (`ursa approval init`, then
+`ursa approval issue`) and append local audit records to
 `~/.ursa/audit/minor_policy.jsonl`. Use `ursa_tool_policies` to inspect the
 tool risk matrix. Targeted MCP tools also require an active engagement and
 fail closed when a URL, hostname, IP address, or CIDR is outside its scope.
