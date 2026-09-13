@@ -6,6 +6,10 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Made Ursa Minor MCP target enforcement fail closed. Network and web tools now
+  require an active engagement, consistently audit low/medium as well as
+  high-risk decisions, accept URL/host/IP/CIDR targets, enforce URL path
+  boundaries, and reject requested networks broader than the authorized CIDR.
 - Made network-published Blink deployments fail closed: provisioning now forces
   production mode, uses a restrictive umask, replaces the known bootstrap
   password, and enables high-risk step-up approvals. Production validation now

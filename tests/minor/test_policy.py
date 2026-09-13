@@ -35,6 +35,9 @@ def test_high_risk_tools_have_machine_readable_metadata():
     assert spray["risk_level"] == "critical"
     assert spray["destructive"] is True
 
+    scan = policies["scan_ports"]
+    assert scan["scope_required"] is True
+
 
 def test_allowed_policy_decision_is_audited(audit_dir):
     decision = policy_mod.enforce_tool_policy(
@@ -52,6 +55,47 @@ def test_allowed_policy_decision_is_audited(audit_dir):
     assert records[0]["target"] == "10.0.0.5"
     assert records[0]["justification"] == "quick service check"
     assert records[0]["policy_result"] == "allow"
+
+
+def test_targeted_tool_is_denied_when_scope_is_unavailable(monkeypatch, audit_dir):
+    monkeypatch.setattr(
+        policy_mod,
+        "_scope_check",
+        lambda _target: {
+            "in_scope": False,
+            "reason": "No active engagement — active target operations are disabled",
+        },
+    )
+
+    decision = policy_mod.enforce_tool_policy(
+        "scan_ports",
+        args={"target": "10.0.0.5"},
+        target="10.0.0.5",
+        actor="alice",
+    )
+
+    assert decision.allowed is False
+    assert decision.policy_result == "deny"
+    assert "No active engagement" in decision.reason
+    assert _audit_records(audit_dir)[0]["policy_result"] == "deny"
+
+
+def test_server_blocks_port_scan_without_active_scope(monkeypatch):
+    from ursa_minor.server import scan_ports
+
+    monkeypatch.setattr(
+        policy_mod,
+        "_scope_check",
+        lambda _target: {
+            "in_scope": False,
+            "reason": "No active engagement — active target operations are disabled",
+        },
+    )
+
+    result = scan_ports("10.0.0.5", quick=True, policy_actor="alice")
+
+    assert "POLICY DENY" in result
+    assert "No active engagement" in result
 
 
 def test_high_risk_tool_requires_approval(audit_dir):

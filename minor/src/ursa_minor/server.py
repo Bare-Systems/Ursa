@@ -32,7 +32,7 @@ Tools:
   - baseline_diff:    Compare current host state against a named baseline
   - triage_host:      Run a lightweight host triage workflow
   - create_engagement: Define a pentest scope manifest (hosts, paths, approval gates)
-  - check_scope:      Validate a URL against the active engagement scope
+  - check_scope:      Validate a URL, host, IP, or CIDR against active scope
   - get_engagement:   Show the active engagement details
   - close_engagement: Close the active engagement
   - ursa_tool_policies: Show tool risk and approval metadata
@@ -250,15 +250,9 @@ def _enforce_minor_policy(
 ) -> str:
     """Return an operator-facing policy block message, or an empty string."""
     from ursa_minor.policy import (
-        classify_tool_policy,
         enforce_tool_policy,
         format_policy_block,
-        policy_requires_gate,
     )
-
-    policy = classify_tool_policy(tool_name, args or {})
-    if not policy_requires_gate(policy):
-        return ""
 
     decision = enforce_tool_policy(
         tool_name,
@@ -275,7 +269,12 @@ def _enforce_minor_policy(
 
 
 @mcp_server.tool()
-def discover_network(target_range: str | None = None, timeout: int = 3) -> str:
+def discover_network(
+    target_range: str | None = None,
+    timeout: int = 3,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+) -> str:
     """
     Discover all devices on the local network using ARP scanning.
 
@@ -286,11 +285,23 @@ def discover_network(target_range: str | None = None, timeout: int = 3) -> str:
         target_range: Network range in CIDR notation (e.g., "192.168.1.0/24").
                       If not provided, auto-detects your local network.
         timeout: Seconds to wait for responses (default 3).
+        policy_actor: Operator or agent requesting the scan.
+        policy_reason: Operator justification recorded in the policy audit.
     """
     local_ip = _get_local_ip()
 
-    if not target_range:
+    if target_range is None:
         target_range, _ = _get_network_range()
+
+    policy_block = _enforce_minor_policy(
+        "discover_network",
+        args={"target_range": target_range, "timeout": timeout},
+        target=target_range,
+        actor=policy_actor,
+        reason=policy_reason,
+    )
+    if policy_block:
+        return policy_block
 
     arp_request = ARP(pdst=target_range)
     broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
@@ -627,21 +638,20 @@ def full_recon(
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    local_ip = _get_local_ip()
+    if target_range is None:
+        target_range, _ = _get_network_range()
+
     policy_block = _enforce_minor_policy(
         "full_recon",
         args={"target_range": target_range, "quick": quick, "threads": threads},
-        target=target_range or "auto-detect",
+        target=target_range,
         actor=policy_actor,
         reason=policy_reason,
         approval_id=policy_approval_id,
     )
     if policy_block:
         return policy_block
-
-    local_ip = _get_local_ip()
-
-    if not target_range:
-        target_range, _ = _get_network_range()
 
     start_time = datetime.now()
     ports = QUICK_PORTS if quick else TOP_PORTS
@@ -792,6 +802,8 @@ def enumerate_subdomains(
     domain: str,
     ct_only: bool = False,
     threads: int = 50,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
 ) -> str:
     """
     Discover subdomains of a target domain using DNS brute-force and
@@ -805,10 +817,22 @@ def enumerate_subdomains(
         ct_only: If True, only use Certificate Transparency (passive, no
                  direct contact with target)
         threads: Number of concurrent DNS resolution threads (default 50)
+        policy_actor: Operator or agent requesting discovery.
+        policy_reason: Operator justification recorded in the policy audit.
     """
     import json as json_mod
     import urllib.request
     import urllib.error
+
+    policy_block = _enforce_minor_policy(
+        "enumerate_subdomains",
+        args={"domain": domain, "ct_only": ct_only, "threads": threads},
+        target=domain,
+        actor=policy_actor,
+        reason=policy_reason,
+    )
+    if policy_block:
+        return policy_block
 
     subdomain_words = [
         "dev", "development", "staging", "stage", "stg", "test", "testing",
@@ -1937,6 +1961,8 @@ def os_fingerprint(
     target: str,
     passive_only: bool = False,
     timeout: float = 3.0,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
 ) -> str:
     """
     Identify the operating system of a remote host by analyzing TCP/IP
@@ -1949,8 +1975,20 @@ def os_fingerprint(
         target: Target IP address
         passive_only: If True, only grab banners (no raw packet probes)
         timeout: Timeout per probe in seconds
+        policy_actor: Operator or agent requesting fingerprinting.
+        policy_reason: Operator justification recorded in the policy audit.
     """
     import re
+
+    policy_block = _enforce_minor_policy(
+        "os_fingerprint",
+        args={"target": target, "passive_only": passive_only, "timeout": timeout},
+        target=target,
+        actor=policy_actor,
+        reason=policy_reason,
+    )
+    if policy_block:
+        return policy_block
 
     TTL_SIGS = {(0, 64): "Linux/Unix/macOS", (65, 128): "Windows", (129, 255): "Cisco/Network Device"}
     WINDOW_SIGS = {
@@ -2056,6 +2094,8 @@ def os_fingerprint(
 def smb_enum(
     target: str,
     timeout: float = 5.0,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
 ) -> str:
     """
     Enumerate SMB (Windows file sharing) on a target. Discovers shares,
@@ -2064,9 +2104,21 @@ def smb_enum(
     Args:
         target: Target IP address
         timeout: Connection timeout in seconds
+        policy_actor: Operator or agent requesting enumeration.
+        policy_reason: Operator justification recorded in the policy audit.
     """
     import struct as st
     import subprocess
+
+    policy_block = _enforce_minor_policy(
+        "smb_enum",
+        args={"target": target, "timeout": timeout},
+        target=target,
+        actor=policy_actor,
+        reason=policy_reason,
+    )
+    if policy_block:
+        return policy_block
 
     lines = [f"SMB Enumeration: {target}", ""]
 
@@ -2944,6 +2996,8 @@ def probe_http(
     timeout: float = 10.0,
     check_favicon: bool = True,
     check_methods: bool = True,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
 ) -> str:
     """
     Perform a rich HTTP probe against a single URL and return a structured
@@ -2965,8 +3019,25 @@ def probe_http(
         timeout: Request timeout in seconds (default 10.0)
         check_favicon: Fetch /favicon.ico and hash it (default True)
         check_methods: Send OPTIONS to discover allowed methods (default True)
+        policy_actor: Operator or agent requesting the probe.
+        policy_reason: Operator justification recorded in the policy audit.
     """
     from ursa_minor.probe import probe as _probe, format_report as _fmt
+
+    policy_block = _enforce_minor_policy(
+        "probe_http",
+        args={
+            "url": url,
+            "timeout": timeout,
+            "check_favicon": check_favicon,
+            "check_methods": check_methods,
+        },
+        target=url,
+        actor=policy_actor,
+        reason=policy_reason,
+    )
+    if policy_block:
+        return policy_block
 
     data = _probe(url, timeout=timeout,
                   check_favicon=check_favicon, check_methods=check_methods)
@@ -2987,6 +3058,8 @@ def tls_scan(
     host: str,
     port: int = 443,
     timeout: float = 10.0,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
 ) -> str:
     """
     Analyze the TLS configuration of a host: certificate chain, protocol
@@ -3004,10 +3077,22 @@ def tls_scan(
         host: Hostname or IP to test (e.g., "example.com" or "192.168.1.1")
         port: TLS port (default 443)
         timeout: Connection timeout in seconds (default 10.0)
+        policy_actor: Operator or agent requesting the scan.
+        policy_reason: Operator justification recorded in the policy audit.
     """
     import ssl
     import socket
     from datetime import datetime, timezone
+
+    policy_block = _enforce_minor_policy(
+        "tls_scan",
+        args={"host": host, "port": port, "timeout": timeout},
+        target=host,
+        actor=policy_actor,
+        reason=policy_reason,
+    )
+    if policy_block:
+        return policy_block
 
     findings: list[str] = []
     structured: dict = {"host": host, "port": port}
@@ -3226,9 +3311,10 @@ def create_engagement(
 @mcp_server.tool()
 def check_scope(url: str) -> str:
     """
-    Check whether a URL is in scope for the currently active engagement.
+    Check whether a URL, hostname, IP address, or CIDR is in scope for the
+    currently active engagement.
     Returns scope status, the engagement ID, and whether destructive tests
-    are approved. If no engagement is active, all URLs are considered in scope.
+    are approved. If no engagement is active, target operations fail closed.
 
     Args:
         url: URL to check (e.g., "http://127.0.0.1:18069/admin")
@@ -3285,8 +3371,8 @@ def get_engagement() -> str:
 @mcp_server.tool()
 def close_engagement() -> str:
     """
-    Close the active engagement and mark it as complete. Any future
-    check_scope calls will return in-scope (no active engagement = no guard).
+    Close the active engagement and mark it as complete. Future target
+    operations fail closed until another engagement is activated.
     """
     from ursa_minor.engagement import close as _close
 
@@ -3316,15 +3402,16 @@ def ursa_tool_policies(risk_level: str = "") -> str:
 
     lines = [
         "Ursa Minor Tool Policies",
-        f"{'Tool':<24} {'Risk':<9} {'Approval':<9} {'Category':<12} Description",
-        "-" * 92,
+        f"{'Tool':<24} {'Risk':<9} {'Approval':<9} {'Scope':<7} {'Category':<12} Description",
+        "-" * 100,
     ]
     for policy in policies:
         approval = "yes" if policy.get("approval_required") else "no"
+        scope = "yes" if policy.get("scope_required") else "no"
         destructive = " destructive" if policy.get("destructive") else ""
         lines.append(
             f"{policy['tool_name']:<24} {policy['risk_level']:<9} "
-            f"{approval:<9} {policy['category']:<12} "
+            f"{approval:<9} {scope:<7} {policy['category']:<12} "
             f"{policy['description']}{destructive}"
         )
     return "\n".join(lines)
@@ -3386,7 +3473,13 @@ def ursa_asset_graph(fact_type: str = "", limit: int = 30) -> str:
 
 
 @mcp_server.tool()
-def ursa_run_checks(target: str, templates_dir: str = "", timeout: float = 10.0) -> str:
+def ursa_run_checks(
+    target: str,
+    templates_dir: str = "",
+    timeout: float = 10.0,
+    policy_actor: str = "operator",
+    policy_reason: str = "",
+) -> str:
     """
     Run declarative security-check templates against a target (Phase 6C).
 
@@ -3402,13 +3495,20 @@ def ursa_run_checks(target: str, templates_dir: str = "", timeout: float = 10.0)
         target: Base URL to test, e.g. "https://example.com".
         templates_dir: Optional path to a directory of custom *.yaml templates.
         timeout: Per-request timeout in seconds.
+        policy_actor: Operator or agent requesting the checks.
+        policy_reason: Operator justification recorded in the policy audit.
     """
-    from ursa_minor.engagement import check as _scope_check
     from ursa_minor.checkengine import builtin_templates, load_templates_from_dir, run_templates
 
-    scope = _scope_check(target)
-    if not scope["in_scope"]:
-        return f"Refusing to run: target is OUT OF SCOPE — {scope['reason']}"
+    policy_block = _enforce_minor_policy(
+        "ursa_run_checks",
+        args={"target": target, "templates_dir": templates_dir, "timeout": timeout},
+        target=target,
+        actor=policy_actor,
+        reason=policy_reason,
+    )
+    if policy_block:
+        return policy_block
 
     templates = builtin_templates()
     if templates_dir:

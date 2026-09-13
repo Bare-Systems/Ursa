@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_AUDIT_DIR = Path.home() / ".ursa" / "audit"
 
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -39,6 +38,7 @@ class ToolPolicy:
     destructive: bool = False
     sensitive_result: bool = False
     target_arg: str = "target"
+    scope_required: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -65,10 +65,23 @@ class ToolPolicyDecision:
 
 TOOL_POLICIES: dict[str, ToolPolicy] = {
     "discover_network": ToolPolicy(
-        "discover_network", "medium", "network", "ARP network discovery."
+        "discover_network",
+        "medium",
+        "network",
+        "ARP network discovery.",
+        target_arg="target_range",
+        scope_required=True,
     ),
     "scan_ports": ToolPolicy(
-        "scan_ports", "medium", "network", "TCP connect port scan."
+        "scan_ports", "medium", "network", "TCP connect port scan.", scope_required=True
+    ),
+    "enumerate_subdomains": ToolPolicy(
+        "enumerate_subdomains",
+        "medium",
+        "network",
+        "Certificate transparency and DNS subdomain discovery.",
+        target_arg="domain",
+        scope_required=True,
     ),
     "sniff_packets": ToolPolicy(
         "sniff_packets",
@@ -86,12 +99,23 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
         "Network discovery plus per-host port scanning.",
         approval_required=True,
         target_arg="target_range",
+        scope_required=True,
     ),
     "dirbust": ToolPolicy(
-        "dirbust", "medium", "web", "Directory and file discovery.", target_arg="url"
+        "dirbust",
+        "medium",
+        "web",
+        "Directory and file discovery.",
+        target_arg="url",
+        scope_required=True,
     ),
     "vuln_scan": ToolPolicy(
-        "vuln_scan", "low", "web", "Header-only audit unless active tests are selected.", target_arg="url"
+        "vuln_scan",
+        "low",
+        "web",
+        "Header-only audit unless active tests are selected.",
+        target_arg="url",
+        scope_required=True,
     ),
     "api_scan": ToolPolicy(
         "api_scan",
@@ -100,9 +124,15 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
         "Schema-driven API probing, auth checks, injection canaries, and IDOR candidates.",
         approval_required=True,
         target_arg="url",
+        scope_required=True,
     ),
     "ursa_run_checks": ToolPolicy(
-        "ursa_run_checks", "medium", "web", "Declarative HTTP checks.", target_arg="target"
+        "ursa_run_checks",
+        "medium",
+        "web",
+        "Declarative HTTP checks.",
+        target_arg="target",
+        scope_required=True,
     ),
     "credential_spray": ToolPolicy(
         "credential_spray",
@@ -112,6 +142,7 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
         approval_required=True,
         destructive=True,
         sensitive_result=True,
+        scope_required=True,
     ),
     "crack_hash": ToolPolicy(
         "crack_hash",
@@ -131,7 +162,42 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
         target_arg="lport",
     ),
     "snmp_scan": ToolPolicy(
-        "snmp_scan", "medium", "network", "SNMP enumeration.", target_arg="target"
+        "snmp_scan",
+        "medium",
+        "network",
+        "SNMP enumeration.",
+        target_arg="target",
+        scope_required=True,
+    ),
+    "os_fingerprint": ToolPolicy(
+        "os_fingerprint",
+        "medium",
+        "network",
+        "Remote service and network-stack fingerprinting.",
+        scope_required=True,
+    ),
+    "smb_enum": ToolPolicy(
+        "smb_enum",
+        "medium",
+        "network",
+        "SMB service and configuration enumeration.",
+        scope_required=True,
+    ),
+    "probe_http": ToolPolicy(
+        "probe_http",
+        "low",
+        "web",
+        "HTTP, redirect, header, method, and favicon fingerprinting.",
+        target_arg="url",
+        scope_required=True,
+    ),
+    "tls_scan": ToolPolicy(
+        "tls_scan",
+        "low",
+        "network",
+        "TLS handshake and certificate inspection.",
+        target_arg="host",
+        scope_required=True,
     ),
     "arp_spoof": ToolPolicy(
         "arp_spoof",
@@ -141,6 +207,7 @@ TOOL_POLICIES: dict[str, ToolPolicy] = {
         approval_required=True,
         destructive=True,
         target_arg="target_ip",
+        scope_required=True,
     ),
 }
 
@@ -170,14 +237,20 @@ def _active_engagement() -> dict | None:
 
 
 def _scope_check(target: str) -> dict | None:
-    if not target or "://" not in target:
-        return None
+    if not target:
+        return {
+            "in_scope": False,
+            "reason": "A concrete target is required for scope enforcement",
+        }
     try:
         from ursa_minor.engagement import check
 
         return check(target)
-    except Exception:
-        return None
+    except Exception as exc:
+        return {
+            "in_scope": False,
+            "reason": f"Scope enforcement failed: {type(exc).__name__}",
+        }
 
 
 def _selected_vuln_tests(args: dict[str, Any]) -> set[str]:
@@ -308,7 +381,7 @@ def evaluate_tool_policy(
     policy_result = "allow"
     decision_reason = f"Allowed by Ursa Minor local policy ({policy.risk_level} risk)."
 
-    scope = _scope_check(target)
+    scope = _scope_check(target) if policy.scope_required else None
     if scope is not None and not scope.get("in_scope", True):
         allowed = False
         policy_result = "deny"

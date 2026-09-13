@@ -24,10 +24,8 @@ Usage (via MCP tools):
 
 import ipaddress
 import json
-import time
 from datetime import datetime
 from pathlib import Path
-
 
 _ENG_DIR = Path.home() / ".ursa" / "engagements"
 _ACTIVE_FILE = _ENG_DIR / ".active"
@@ -73,13 +71,14 @@ def _save(eng_id: str, record: dict) -> None:
 
 def _ip_in_scope(host: str, scope_hosts: list[str]) -> bool:
     """Return True if host matches any scope entry (exact, CIDR, or wildcard domain)."""
+    host = host.strip().lower().rstrip(".")
     try:
         host_addr = ipaddress.ip_address(host)
     except ValueError:
         host_addr = None
 
     for entry in scope_hosts:
-        entry = entry.strip()
+        entry = entry.strip().lower().rstrip(".")
         if not entry:
             continue
         # CIDR
@@ -100,6 +99,73 @@ def _ip_in_scope(host: str, scope_hosts: list[str]) -> bool:
         if host == entry:
             return True
 
+    return False
+
+
+def _network_in_scope(target: ipaddress.IPv4Network | ipaddress.IPv6Network,
+                      scope_hosts: list[str]) -> bool:
+    """Return whether the complete requested network is within an allowed network."""
+    for entry in scope_hosts:
+        try:
+            scoped = ipaddress.ip_network(entry.strip(), strict=False)
+        except ValueError:
+            try:
+                scoped_address = ipaddress.ip_address(entry.strip())
+            except ValueError:
+                continue
+            if target.num_addresses == 1 and target.network_address == scoped_address:
+                return True
+            continue
+        if (
+            isinstance(target, ipaddress.IPv4Network)
+            and isinstance(scoped, ipaddress.IPv4Network)
+            and target.subnet_of(scoped)
+        ) or (
+            isinstance(target, ipaddress.IPv6Network)
+            and isinstance(scoped, ipaddress.IPv6Network)
+            and target.subnet_of(scoped)
+        ):
+            return True
+    return False
+
+
+def _parse_target(
+    value: str,
+) -> tuple[
+    str,
+    str,
+    ipaddress.IPv4Network | ipaddress.IPv6Network | None,
+    bool,
+]:
+    """Normalize a URL, hostname, IP address, or CIDR scope target."""
+    import urllib.parse
+
+    target = value.strip()
+    if not target:
+        return "", "/", None, False
+
+    try:
+        network = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        network = None
+    if network is not None and "/" in target:
+        return str(network.network_address), "/", network, False
+
+    is_url = "://" in target
+    parsed = urllib.parse.urlsplit(target if is_url else f"//{target}")
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    path = parsed.path or "/"
+    return host, path, None, is_url
+
+
+def _path_in_scope(path: str, scope_paths: list[str]) -> bool:
+    for raw_prefix in scope_paths:
+        prefix = "/" + raw_prefix.strip().lstrip("/")
+        if prefix == "/":
+            return True
+        prefix = prefix.rstrip("/")
+        if path == prefix or path.startswith(prefix + "/"):
+            return True
     return False
 
 
@@ -133,9 +199,11 @@ def create(
     Returns:
         Engagement record dict.
     """
-    eng_id = f"eng_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    eng_id = f"eng_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     hosts = [h.strip() for h in scope_hosts.split(",") if h.strip()]
     paths = [p.strip() for p in scope_paths.split(",") if p.strip()] or ["/"]
+    if not hosts:
+        raise ValueError("scope_hosts must include at least one host, IP address, or CIDR")
 
     record = {
         "id": eng_id,
@@ -157,22 +225,21 @@ def create(
     return record
 
 
-def check(url: str) -> dict:
-    """Check whether a URL is in scope for the active engagement.
+def check(target: str) -> dict:
+    """Check whether a URL, hostname, IP address, or CIDR is in scope.
 
     Returns a dict with keys:
       in_scope (bool), reason (str), engagement_id (str | None),
       allow_destructive (bool)
     """
-    import urllib.parse
 
     eng_id = _active_id()
     if eng_id is None:
         return {
-            "in_scope": True,
-            "reason": "No active engagement — scope checks disabled",
+            "in_scope": False,
+            "reason": "No active engagement — active target operations are disabled",
             "engagement_id": None,
-            "allow_destructive": True,
+            "allow_destructive": False,
         }
 
     record = _load(eng_id)
@@ -184,15 +251,18 @@ def check(url: str) -> dict:
             "allow_destructive": False,
         }
 
-    parsed = urllib.parse.urlparse(url)
-    host = parsed.hostname or ""
-    path = parsed.path or "/"
+    host, path, target_network, is_url = _parse_target(target)
 
     scope = record.get("scope", {})
     scope_hosts = scope.get("hosts", [])
     scope_paths = scope.get("paths", ["/"])
 
-    if not _ip_in_scope(host, scope_hosts):
+    target_allowed = (
+        _network_in_scope(target_network, scope_hosts)
+        if target_network is not None
+        else _ip_in_scope(host, scope_hosts)
+    )
+    if not target_allowed:
         return {
             "in_scope": False,
             "reason": f"Host '{host}' not in scope {scope_hosts}",
@@ -200,7 +270,7 @@ def check(url: str) -> dict:
             "allow_destructive": False,
         }
 
-    if not any(path.startswith(p) for p in scope_paths):
+    if is_url and not _path_in_scope(path, scope_paths):
         return {
             "in_scope": False,
             "reason": f"Path '{path}' not in scope paths {scope_paths}",
@@ -210,7 +280,7 @@ def check(url: str) -> dict:
 
     return {
         "in_scope": True,
-        "reason": "URL matches scope",
+        "reason": "Target matches active engagement scope",
         "engagement_id": eng_id,
         "allow_destructive": record.get("allow_destructive", False),
     }

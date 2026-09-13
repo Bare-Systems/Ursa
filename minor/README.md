@@ -79,16 +79,21 @@ The defensive triage tools do not require `sudo` when scanning an offline filesy
 
 ## Policy Gates and Audit
 
-Ursa Minor keeps normal read-only enumeration available, but high-risk MCP
-actions require explicit approval metadata before execution. Gated actions
+Ursa Minor requires an active engagement for every MCP tool that touches a
+remote target. Scope checks accept URLs, hostnames, IP addresses, and CIDRs;
+they fail closed when no engagement is active and require a requested subnet
+to fit completely inside an authorized CIDR. Create the boundary first with
+`create_engagement`, then verify individual targets with `check_scope`.
+
+High-risk MCP actions also require explicit approval metadata before execution. Gated actions
 include packet capture, full network reconnaissance, full port sweeps,
 authenticated directory discovery, active injection scans, API schema probing,
 reverse-shell payload generation, credential spraying, SNMP brute-force/walk,
 and ARP spoofing.
 
 Pass `policy_actor`, `policy_reason`, and `policy_approval_id` to proceed with
-an approval-gated tool. Destructive tools also respect the active engagement's
-`allow_destructive` setting when an engagement is active. Each policy decision
+an approval-gated tool. Destructive tools also require the active engagement's
+`allow_destructive` setting. Each policy decision
 is appended to `~/.ursa/audit/minor_policy.jsonl` with actor, target,
 justification, risk level, and policy result. Use `ursa_tool_policies` to list
 the machine-readable risk metadata exposed by the MCP server.
