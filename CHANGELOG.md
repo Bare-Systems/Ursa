@@ -6,6 +6,11 @@ All notable changes to Ursa are documented here.
 
 ### Changed
 
+- Closed Ursa Major governance bypasses: approved tasks are now bound to their
+  exact session, task type, arguments, action, and risk level and are consumed
+  after one queue operation; unknown shell commands default to high risk;
+  auto-recon uses governed tasking; local post execution is limited to
+  read-only `enum/*`; and post-module path traversal is rejected.
 - Replaced Ursa Minor's trust-on-string high-risk approvals with short-lived,
   HMAC-signed, single-use capability tokens issued outside MCP via
   `ursa approval issue`. Tokens are bound to tool, target, actor, reason, and a

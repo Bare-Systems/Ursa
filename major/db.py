@@ -667,6 +667,19 @@ def resolve_approval_request(approval_id, approved, decided_by="operator", note=
     return False
 
 
+def consume_approval_request(approval_id):
+    """Atomically mark an approved request as consumed exactly once."""
+    db = get_db()
+    cursor = db.execute(
+        "UPDATE approval_requests SET status='consumed' WHERE id=? AND status='approved'",
+        (approval_id,),
+    )
+    changed = cursor.rowcount == 1
+    db.commit()
+    db.close()
+    return changed
+
+
 def _compute_event_hash(prev_hash, payload):
     raw = f"{prev_hash}|{json.dumps(payload, sort_keys=True, separators=(',', ':'))}"
     return hashlib.sha256(raw.encode()).hexdigest()

@@ -324,7 +324,8 @@ For implementation and usage details: **[implants/README.md](implants/README.md)
 
 Ursa goes beyond task execution by including operational safeguards:
 
-- **Step-up approval workflow** for high-risk operations
+- **Single-use step-up approvals** bound to the exact session, task, arguments,
+  and risk level for high-risk operations
 - **Policy matrix and threshold alerts**
 - **Cryptographically chained audit records**
 - **Campaign-level grouping, notes, timelines, and handoff reports**

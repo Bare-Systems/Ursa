@@ -289,7 +289,8 @@ When accessed via MCP (root `server.py`), operators get 60+ tools:
 
 **Post-Exploitation:**
 - `ursa_post_list` — List all available post-exploitation modules
-- `ursa_post_run` — Run a post-exploitation module (locally on C2 for enumeration)
+- `ursa_post_run` — Run read-only `enum/*` modules locally on C2; credential,
+  persistence, and lateral modules must use governed remote dispatch
 
 **File Operations:**
 - `ursa_download` — Exfiltrate a file from a target
@@ -329,7 +330,12 @@ Set with `traffic_profile` in `ursa.yaml` or `--profile` CLI flag. The builder a
 
 ## Auto-Recon
 
-When `auto_recon.enabled: true`, Ursa Major queues a configurable set of post-exploitation modules on the first beacon check-in from a new session. Results surface automatically in `ursa_sitrep` and `ursa_session_recon`.
+When `auto_recon.enabled: true`, Ursa Major routes a configurable set of
+post-exploitation modules through the normal governance and immutable-audit
+path on the first beacon check-in from a new session. Enumeration modules are
+medium risk; credential modules are high risk; persistence and lateral modules
+are critical. Results surface automatically in `ursa_sitrep` and
+`ursa_session_recon`.
 
 Completed `enum/sysinfo` results also trigger **session auto-tagging** — OS (linux/darwin/windows), architecture (x64/arm64), privilege level (root/admin), and cloud credentials (aws-creds/k8s) are applied as session tags automatically.
 

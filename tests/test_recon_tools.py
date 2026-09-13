@@ -49,6 +49,27 @@ def _make_findings(severities=("CRITICAL", "HIGH", "MEDIUM")):
     ]
 
 
+def test_local_post_run_rejects_non_enumeration_modules():
+    from server import ursa_post_run
+
+    result = ursa_post_run("persist/cron")
+
+    assert "POLICY DENY" in result
+    assert "ursa_post_dispatch" in result
+
+
+def test_post_module_paths_reject_traversal():
+    from server import _bundle_module, ursa_post_run
+
+    assert "POLICY DENY" in ursa_post_run("enum/../../persist/cron")
+    try:
+        _bundle_module("enum/../../persist/cron")
+    except FileNotFoundError as exc:
+        assert "Invalid module name" in str(exc)
+    else:
+        raise AssertionError("post module path traversal was accepted")
+
+
 # ── _parse_post_result ────────────────────────────────────────────────────────
 
 class TestParsePostResult:

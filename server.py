@@ -2405,8 +2405,15 @@ def ursa_post_run(module: str, args: dict | None = None) -> str:
         args:   Optional dict of module-specific arguments.
     """
     import json
+    import re
 
     from post.loader import PostLoader as _PostLoader
+
+    if not re.fullmatch(r"enum/[a-z0-9_]+", module):
+        return (
+            "[POLICY DENY] Local post execution is restricted to read-only enum/* modules. "
+            "Use ursa_post_dispatch for governed credential, persistence, or lateral actions."
+        )
 
     result = _PostLoader().dispatch(module, args or {})
 
@@ -2430,6 +2437,9 @@ def _bundle_module(module_name: str) -> str:
     no 'post' package installed.  Returns the combined Python source.
     """
     import re as _re
+
+    if not _re.fullmatch(r"(?:enum|cred|persist|lateral)/[a-z0-9_]+", module_name):
+        raise FileNotFoundError(f"Invalid module name: {module_name}")
 
     root = Path(__file__).parent
 

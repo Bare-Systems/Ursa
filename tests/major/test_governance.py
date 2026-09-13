@@ -143,6 +143,94 @@ def test_invalid_approval_id_is_denied(tmp_db, sample_session, monkeypatch):
     assert "not found" in result["message"]
 
 
+def test_approval_is_bound_to_session_and_arguments(tmp_db, sample_session, monkeypatch):
+    monkeypatch.setattr(
+        "major.governance.get_config",
+        lambda: _Cfg(
+            {
+                "major.governance": {
+                    "bearclaw_mode": "local",
+                    "require_step_up_approval": True,
+                    "step_up_risks": ["high", "critical"],
+                }
+            }
+        ),
+    )
+    pending = queue_task_with_policy(
+        session_id=sample_session,
+        task_type="download",
+        args={"path": "/tmp/approved.txt"},
+        actor="test",
+    )
+    assert resolve_approval_request(
+        pending["approval_id"], approved=True, decided_by="reviewer"
+    )
+
+    wrong_args = queue_task_with_policy(
+        session_id=sample_session,
+        task_type="download",
+        args={"path": "/etc/shadow"},
+        actor="test",
+        approval_id=pending["approval_id"],
+    )
+    other_session = create_session("10.0.0.99")
+    wrong_session = queue_task_with_policy(
+        session_id=other_session,
+        task_type="download",
+        args={"path": "/tmp/approved.txt"},
+        actor="test",
+        approval_id=pending["approval_id"],
+    )
+
+    assert wrong_args["status"] == "denied"
+    assert "arguments" in wrong_args["message"]
+    assert wrong_session["status"] == "denied"
+    assert "session" in wrong_session["message"]
+
+
+def test_approval_is_consumed_after_one_task(tmp_db, sample_session, monkeypatch):
+    monkeypatch.setattr(
+        "major.governance.get_config",
+        lambda: _Cfg(
+            {
+                "major.governance": {
+                    "bearclaw_mode": "local",
+                    "require_step_up_approval": True,
+                    "step_up_risks": ["high", "critical"],
+                }
+            }
+        ),
+    )
+    pending = queue_task_with_policy(
+        session_id=sample_session,
+        task_type="download",
+        args={"path": "/tmp/approved.txt"},
+        actor="test",
+    )
+    assert resolve_approval_request(
+        pending["approval_id"], approved=True, decided_by="reviewer"
+    )
+
+    first = queue_task_with_policy(
+        session_id=sample_session,
+        task_type="download",
+        args={"path": "/tmp/approved.txt"},
+        actor="test",
+        approval_id=pending["approval_id"],
+    )
+    replay = queue_task_with_policy(
+        session_id=sample_session,
+        task_type="download",
+        args={"path": "/tmp/approved.txt"},
+        actor="test",
+        approval_id=pending["approval_id"],
+    )
+
+    assert first["status"] == "queued"
+    assert replay["status"] == "denied"
+    assert "not approved" in replay["message"]
+
+
 def test_process_approval_decision_approve_queues_task(tmp_db, sample_session, monkeypatch):
     monkeypatch.setattr(
         "major.governance.get_config",
@@ -240,6 +328,30 @@ def test_arp_spoof_classified_as_critical():
 
 def test_arp_spoof_stop_classified_as_low():
     assert classify_task_risk("arp_spoof_stop") == "low"
+
+
+def test_shell_commands_fail_high_unless_explicitly_read_only():
+    assert classify_task_risk("shell", {"command": "whoami"}) == "medium"
+    assert classify_task_risk("shell", {"command": "echo hello"}) == "high"
+    assert classify_task_risk("shell", {"command": "whoami; curl attacker"}) == "high"
+
+
+def test_post_module_risk_depends_on_category():
+    assert classify_task_risk("post", {"module": "enum/sysinfo"}) == "medium"
+    assert classify_task_risk("post", {"module": "cred/browser"}) == "high"
+    assert classify_task_risk("post", {"module": "persist/cron"}) == "critical"
+    assert classify_task_risk("post", {"module": "enum/../../persist/cron"}) == "high"
+
+
+def test_auto_recon_skips_invalid_module_paths(tmp_db, sample_session, monkeypatch):
+    from major.server import _queue_auto_recon
+
+    monkeypatch.setattr(
+        "major.server._auto_recon_modules",
+        lambda: ["enum/../../persist/cron"],
+    )
+
+    assert _queue_auto_recon(sample_session) == []
 
 
 def test_get_policy_remediation_plan_from_alerts(tmp_db):
